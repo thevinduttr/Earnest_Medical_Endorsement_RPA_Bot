@@ -1,0 +1,18 @@
+bot_details:
+  name: "Sukoon Medical Bot"
+  version: "1.0.0"
+  id: "1"
+
+paths:
+  base_url: "https://medical.sukoon.com/"
+
+browser:
+  headless: false
+  engine: "msedge"
+  channel: "msedge"
+  persistent_context: true
+  user_data_dir: "data/browser_profiles/sukoon"
+  viewport:
+    width: 1920
+    height: 945
+

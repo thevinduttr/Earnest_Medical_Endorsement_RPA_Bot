@@ -1,0 +1,20 @@
+bot_details:
+  name: "EIBCMS UAT Bot"
+  version: "1.0.0"
+  description: "A bot for the EIBCMS UAT environment"
+  id : "1"
+
+paths:
+  base_url: "https://eibcms-uat.earnestins.ae/"
+
+browser:
+  headless: false
+  viewport:
+    width: 1440
+    height: 900
+
+tracing:
+  enabled: true
+  screenshots: true
+  snapshots: true
+  sources: true

@@ -1,0 +1,8 @@
+{
+  "PortalName": "SUKOON",
+  "RequestType": "ADD",
+  "ActionType": "BATCH",
+  "RunPortal": true,
+  "UseDatabase": true,
+  "RequestId": "20260408053326983893"
+}

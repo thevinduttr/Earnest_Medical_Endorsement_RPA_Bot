@@ -1,0 +1,15 @@
+search_vehicle:
+
+  search_vehicle_button: (//button[normalize-space()='Search Vehicle'])[1]
+
+  modal : (//span[contains(@class,'ui-dialog-title') and .//span[contains(@class,'fa-car')] and contains(normalize-space(.),'Vehicle')])[1]
+
+  advanced_search_button: (//button[normalize-space()='Advance Search'])[1]
+
+  search_chassis: "//*[@name='ChassisNo']"
+  
+  search_button: "(//button[normalize-space()='Search'])[1]"
+
+  select_button: "(//button[contains(@class,'btn-system') and normalize-space()='Select'])[1]"
+
+  close_modal_button: (//button[contains(@class,'ui-dialog-titlebar-close')])[2]

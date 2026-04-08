@@ -1,0 +1,7 @@
+playwright
+PyYAML
+pyodbc
+pandas
+openpyxl
+azure-storage-blob
+pywin32

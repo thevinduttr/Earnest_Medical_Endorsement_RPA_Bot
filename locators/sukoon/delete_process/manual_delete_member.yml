@@ -1,0 +1,20 @@
+manual_delete_member:
+  # Left navigation
+  policy_servicing_menu: "#menu-policy > a"
+  member_menu: "#menu-policy > ul > li:nth-of-type(2) > a"
+  delete_menu: "#menu-policy > ul > li.open li:nth-of-type(4) > a"
+  manual_menu: "#menu-policy > ul > li.open > ul > li.open li:nth-of-type(1) > a"
+
+  # Manual delete page
+  manual_delete_page_marker: "span.filter-option"
+  company_dropdown_toggle: "span.filter-option"
+  company_option_items: "div.dropdown-menu.open li a span.text"
+
+  # Form fields
+  delete_type_selector: "#form-select-type"
+  employee_number_input: "#employee-number-section input"
+  deletion_effective_date_input: "#form-deletion-effective-date"
+  deletion_effective_date_picker_day: "div.left tr:nth-of-type(2) > td:nth-of-type(3)"
+  supporting_document_input: "#supporting-document"
+  delete_comments: "#divComments textarea"
+  clear_button: "#container button:has-text('Clear')"

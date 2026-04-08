@@ -1,0 +1,44 @@
+create_vehicle:
+  create_vehicle_button: (//button[normalize-space()='New Vehicle'])[1]
+  modal : (//span[contains(@class,'ui-dialog-title') and .//span[contains(@class,'fa-car')] and contains(normalize-space(.),'Vehicle')])[1]
+
+  general_make: "(//label[normalize-space(string())='Make *']/following::select[1])[1]"
+  general_model: "(//label[normalize-space(string())='Model *']/following::select[1])[1]"
+  general_variant: "(//label[normalize-space(string())='Variant']/following::select[1])[2]"
+  general_make_year: "(//label[normalize-space(string())='Year Of Manufacture *']/following::input[1])[1]"
+  general_seating_capacity: "(//label[normalize-space(string())='Seating Capacity']/following::input[1])[1]"
+  general_body_type: "(//label[normalize-space(string())='Body Type']/following::select[1])[1]"
+  general_fuel_type: "(//label[normalize-space(string())='Fuel Type']/following::select[1])[1]"
+  
+  general_plate_category: "(//label[normalize-space(string())='Plate Category']/following::select[1])[1]"
+  general_plate_colour: "(//label[normalize-space(string())='Plate Colour']/following::select[1])[1]"
+  general_empty_weight: "(//label[normalize-space(string())='Empty Weight']/following::input[1])[1]"
+  general_gross_weight: "(//label[normalize-space(string())='Gross Weight']/following::input[1])[1]"
+  general_vehicle_colour: "(//label[normalize-space(string())='Vehicle Colour']/following::select[1])[2]"
+  general_engine_number: "(//label[normalize-space(string())='Engine Number']/following::input[1])[2]"
+  general_chassis_number: "(//label[normalize-space(string())='Chassis Number']/following::input[1])[2]"
+  general_vehicle_value: "//input[@name='Vehicle.VehicleValue']"
+  general_vehicle_annual_mileage: "(//label[normalize-space(string())='Vehicle Annual Mileage']/following::select[1])[1]"
+  general_bank_name: "(//label[normalize-space(string())='Bank Name']/following::select[1])[3]"
+  general_pos: "(//label[normalize-space(string())='POS']/following::select[1])[1]"
+  general_country_of_manufacture: "(//label[normalize-space(string())='Country Of Manufacture']/following::select[1])[1]"
+
+  registration_no_part1: "//input[@name='Vehicle.RegnStCode']"
+  registration_no_part2: "//input[@name='Vehicle.RegnSrlNo']"
+  registration_emirate: "(//label[normalize-space(string())='Emirate']/following::select[1])[1]"
+  registration_date_of_first_registration: "//input[@name='Vehicle.RegnDate']"
+  registration_tcf_no : "//input[@name='Vehicle.TCFNo']"
+
+  other_is_modified: "//input[@name='Vehicle.IsModified' and @type='checkbox']"
+  other_is_non_gcc_vehicle: "//input[@name='Vehicle.IsNonGCCVehicle' and @type='checkbox']"
+  other_is_imported_vehicle: "//input[@name='Vehicle.IsImported' and @type='checkbox']"
+  other_is_third_party: "//input[@name='Vehicle.IsThirdParty' and @type='checkbox']"
+  other_is_uninsured: "//input[@name='Vehicle.IsUninsured' and @type='checkbox']"
+
+  save_button: "(//button[contains(@class,'btn-success') and normalize-space()='Save'])[2]"
+
+  upload_document_field: "(//div[starts-with(@id,'DragnDrop__') and contains(@class,'dropzone')])[2]"
+
+  close_modal_button: "//button[contains(@onclick,'cancelVehicle') and contains(@onclick,'edit')]"
+  close_tab_button: (//span[normalize-space()='Remove Tab' and contains(@class,'ui-icon-close')])[1]
+

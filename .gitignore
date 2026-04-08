@@ -1,0 +1,65 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Virtual environments
+.env
+.venv
+venv/
+env/
+ENV/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Logs and runtime outputs
+*.log
+data/logs/
+data/outputs/
+data/outputs/error_screenshots/
+data/outputs/comparison/
+data/attachments/
+data/login.json
+
+# Playwright / browser test artifacts
+playwright-report/
+ms-playwright/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets / env files
+*.env
+.env.*
+config/env/
+config/env/*.env
+*outlook_token_cache.json
+
+# Security sensitive files
+data/login.json
+data/credentials/
+config/secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Test cache
+.pytest_cache/
+
+# Misc
+*.pid
+*.seed
