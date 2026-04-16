@@ -44,11 +44,26 @@ def _build_file_map(base_dir: Path) -> Dict[ProcessKey, Dict[str, str]]:
                 (base_dir / "sukoon" / "delete" / "batch" / "supporting_document_2.zip").resolve()
             ),
         },
+        ("SUKOON", "DELETE", "BULK"): {
+            "batch_delete_member_file": str(
+                (base_dir / "sukoon" / "delete" / "bulk" / "member_deletion_bulk.xlsx").resolve()
+            ),
+            "batch_delete_supporting_document_1": str(
+                (base_dir / "sukoon" / "delete" / "bulk" / "supporting_document.zip").resolve()
+            ),
+            "batch_delete_supporting_document_2": str(
+                (base_dir / "sukoon" / "delete" / "bulk" / "supporting_document_2.zip").resolve()
+            ),
+        },
     }
 
 
 def get_upload_paths(portal_name: str, request_type: str, action_type: str) -> Dict[str, str]:
-    key = (str(portal_name).upper(), str(request_type).upper(), str(action_type).upper())
+    normalized_action = str(action_type).upper()
+    if normalized_action == "BULK":
+        normalized_action = "BATCH"
+
+    key = (str(portal_name).upper(), str(request_type).upper(), normalized_action)
     base_dir = Path("data/attachments/samples")
     file_map = _build_file_map(base_dir)
     return dict(file_map.get(key, {}))

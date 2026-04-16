@@ -13,8 +13,10 @@ from src.services.db_service.azure_db_connection import AzureSQLConnection
 
 
 TABLE_NAME = "[dbo].[EndorsementRequestsMemberData]"
+STATUS_TABLE = "[dbo].[EndorsementRequestStatus]"
 DEFAULT_ADD_TEMPLATE = Path("data/templates/SUKOON/ADD.xlsx")
-DEFAULT_DELETE_TEMPLATE = Path("data/templates/SUKOON/DELETE.xlsx")
+DEFAULT_DELETE_TEMPLATE = Path("data/templates/SUKOON/DETETE.xlsx")
+DEFAULT_BULK_DELETE_TEMPLATE = DEFAULT_DELETE_TEMPLATE
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,14 @@ def _value_from_row(row: Dict[str, Any], header: str, row_number: int) -> Any:
     return ""
 
 
+def _value_from_bulk_delete_row(row: Dict[str, Any], header: str) -> Any:
+    if header in {"health card number", "card number"}:
+        return _normalize_scalar(row.get("HealthCardNumber"))
+    if header in {"deletion effective date", "effective date"}:
+        return _to_excel_date(row.get("DeletionEffectiveDate"))
+    return ""
+
+
 def _load_request_members_dataframe(
     request_id: str,
     portal_name: str,
@@ -185,6 +195,35 @@ ORDER BY Id ASC, CreatedAt ASC
         )
 
     return frame
+
+
+def _load_success_user_ids(request_id: str, logger=None) -> list[str]:
+    query = f"""
+SELECT DISTINCT UserId
+FROM {STATUS_TABLE}
+WHERE RequestId = ?
+  AND UPPER(ISNULL(EmailStatus, '')) = 'SUCCESS'
+  AND UPPER(ISNULL(OcrStatus, '')) = 'SUCCESS'
+ORDER BY UserId ASC
+"""
+
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(query, [str(request_id).strip()])
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+
+    user_ids = [str(row[0]).strip() for row in rows if str(row[0]).strip()]
+    if not user_ids:
+        raise ValueError(
+            "No OCR/Email SUCCESS members found for request "
+            f"RequestId={request_id}"
+        )
+
+    return user_ids
 
 
 def _resolve_template_path(request_type: str) -> Path:
@@ -271,3 +310,98 @@ def build_batch_census_file(
         members_count=len(records),
         template_path=template_path.resolve(),
     )
+
+
+def build_bulk_delete_census_file(
+    request_id: str,
+    output_path: str | Path,
+    portal_name: str = "SUKOON",
+    include_user_ids: Iterable[str] | None = None,
+    logger=None,
+) -> CensusBuildResult:
+    if not str(request_id or "").strip():
+        raise ValueError("request_id is required for bulk delete census generation")
+
+    template_path = DEFAULT_BULK_DELETE_TEMPLATE
+    if not template_path.exists():
+        raise FileNotFoundError(f"Bulk delete census template not found: {template_path}")
+
+    if include_user_ids is None:
+        include_user_ids = load_request_user_ids(
+            request_id=request_id,
+            portal_name=portal_name,
+            request_type="DELETE",
+            logger=logger,
+        )
+
+    members_df = _load_request_members_dataframe(
+        request_id=request_id,
+        portal_name=portal_name,
+        request_type="DELETE",
+        include_user_ids=include_user_ids,
+        logger=logger,
+    )
+
+    workbook = load_workbook(template_path)
+    worksheet = workbook["Members"] if "Members" in workbook.sheetnames else workbook[workbook.sheetnames[0]]
+
+    header_row_index = 1
+    header_by_column: Dict[int, str] = {}
+    for column_index in range(1, worksheet.max_column + 1):
+        cell_value = worksheet.cell(row=header_row_index, column=column_index).value
+        normalized = _normalize_header(cell_value)
+        if normalized:
+            header_by_column[column_index] = normalized
+
+    if not header_by_column:
+        raise ValueError(f"Bulk delete template sheet has no headers: {template_path}")
+
+    date_headers = {
+        "deletion effective date",
+        "effective date",
+    }
+
+    for row_index in range(header_row_index + 1, worksheet.max_row + 1):
+        for column_index in header_by_column:
+            worksheet.cell(row=row_index, column=column_index).value = None
+
+    records = members_df.to_dict(orient="records")
+    for member_index, row in enumerate(records, start=1):
+        excel_row = header_row_index + member_index
+        for column_index, header in header_by_column.items():
+            mapped_value = _value_from_bulk_delete_row(
+                row=row,
+                header=header,
+            )
+            cell = worksheet.cell(row=excel_row, column=column_index)
+            cell.value = mapped_value
+            if header in date_headers and isinstance(mapped_value, date):
+                cell.number_format = "MM/DD/YYYY"
+
+    resolved_output = Path(output_path).resolve()
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(resolved_output)
+
+    if logger:
+        logger.info(
+            "Bulk delete census generated | "
+            f"RequestId={request_id} | Members={len(records)} | Output={resolved_output}"
+        )
+
+    return CensusBuildResult(
+        request_id=str(request_id).strip(),
+        output_path=resolved_output,
+        members_count=len(records),
+        template_path=template_path.resolve(),
+    )
+
+
+def load_request_user_ids(
+    request_id: str,
+    portal_name: str,
+    request_type: str,
+    logger=None,
+) -> list[str]:
+    _ = portal_name
+    _ = request_type
+    return _load_success_user_ids(request_id=request_id, logger=logger)

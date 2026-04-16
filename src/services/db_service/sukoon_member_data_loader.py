@@ -54,6 +54,9 @@ PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
     "delete_batch": {
         "company_name": "PolicyNumber",
     },
+    "delete_bulk": {
+        "company_name": "PolicyNumber",
+    },
 }
 
 DATE_VALUE_KEYS = {
@@ -257,10 +260,10 @@ def load_member_process_values(
 
 def _normalize_action_for_selector(action_type: Any) -> str:
     action = _normalize_upper(action_type)
-    if action == "BULK":
-        return "BATCH"
     if action == "INDIVIDUAL":
         return "MANUAL"
+    if action == "BULK":
+        return "BATCH"
     return action
 
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+import csv
 from pathlib import Path
 import logging
+import shutil
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from playwright.async_api import async_playwright
@@ -12,7 +14,16 @@ from src.portals.sukoon.add_process.manual_process.manual_add_member import manu
 from src.portals.sukoon.delete_process.batch_process.batch_delete_member import batch_delete_member
 from src.portals.sukoon.delete_process.manual_process.manual_delete_member import manual_delete_member
 from src.portals.sukoon.main_process.login import login
-from src.services.db_service.sukoon_batch_census_builder import build_batch_census_file
+from src.services.db_service.sukoon_batch_census_builder import (
+	build_batch_census_file,
+	load_request_user_ids,
+)
+from src.services.blob_service.azure_blob_download_service import AzureBlobDownloadService
+from src.services.db_service.azure_db_connection import AzureSQLConnection
+from src.services.db_service.sukoon_preportal_processor import (
+	_download_documents_user_wise,
+	_fetch_request_documents_for_users,
+)
 from src.services.db_service.sukoon_portal_member_error_sync import (
 	MemberErrorSyncSummary,
 	sync_batch_validation_errors_to_portal_status,
@@ -71,6 +82,30 @@ def _init_logger(run_id: str, request_id: str | None = None) -> logging.Logger:
 	logger.addHandler(stream_handler)
 	logger.propagate = False
 	return logger
+
+
+def _write_invalid_members_csv(
+	*,
+	invalid_members: list,
+	output_path: Path,
+	logger: logging.Logger,
+) -> None:
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	with output_path.open("w", newline="", encoding="utf-8") as csv_file:
+		writer = csv.writer(csv_file)
+		writer.writerow(["first_name", "last_name", "eid_number", "employee_number", "error_message"])
+		for member in invalid_members:
+			writer.writerow(
+				[
+					getattr(member, "first_name", ""),
+					getattr(member, "last_name", ""),
+					getattr(member, "eid_number", ""),
+					getattr(member, "employee_number", ""),
+					getattr(member, "error_message", ""),
+				]
+			)
+
+	logger.info(f"Invalid members CSV saved: {output_path}")
 
 
 def _merge_values(base_values: dict, override_values: dict) -> dict:
@@ -140,7 +175,7 @@ def _load_configuration(
 			batch_add_values = _merge_values(batch_add_values, db_result.process_values)
 		elif process_key == "delete_manual":
 			manual_delete_values = _merge_values(manual_delete_values, db_result.process_values)
-		elif process_key == "delete_batch":
+		elif process_key in {"delete_batch", "delete_bulk"}:
 			batch_delete_values = _merge_values(batch_delete_values, db_result.process_values)
 		else:
 			raise RuntimeError(f"Unsupported process key for DB merge: {process_key}")
@@ -169,7 +204,7 @@ def _prepare_batch_census_before_portal(
 	upload_paths: dict,
 	logger: logging.Logger,
 ):
-	if process_key not in {"add_batch", "delete_batch"}:
+	if process_key not in {"add_batch", "delete_batch", "delete_bulk"}:
 		return
 
 	if not resolved_request_id:
@@ -180,7 +215,7 @@ def _prepare_batch_census_before_portal(
 
 	if process_key == "add_batch":
 		output_path = upload_paths.get("batch_member_file")
-	elif process_key == "delete_batch":
+	elif process_key in {"delete_batch", "delete_bulk"}:
 		output_path = upload_paths.get("batch_delete_member_file")
 	else:
 		output_path = None
@@ -223,6 +258,321 @@ def _prepare_batch_census_before_portal(
 						"Batch supporting ZIP generation skipped because census output was not found | "
 						f"ExpectedSource={source_file}"
 					)
+
+
+	if process_key in {"delete_batch", "delete_bulk"}:
+		_supporting_zip_for_bulk_delete(
+			request_id=resolved_request_id,
+			census_output_path=result.output_path,
+			upload_paths=upload_paths,
+			logger=logger,
+		)
+
+
+def _supporting_zip_for_bulk_delete(
+	request_id: str,
+	census_output_path: Path,
+	upload_paths: dict,
+	logger: logging.Logger,
+) -> None:
+	max_zip_bytes = 4 * 1024 * 1024
+	supporting_zip_path = str(upload_paths.get("batch_delete_supporting_document_1") or "").strip()
+	if not supporting_zip_path:
+		return
+
+	supporting_zip_path_2 = str(upload_paths.get("batch_delete_supporting_document_2") or "").strip()
+
+	zip_path = Path(supporting_zip_path)
+	zip_path.parent.mkdir(parents=True, exist_ok=True)
+
+	zip_path_2 = Path(supporting_zip_path_2) if supporting_zip_path_2 else None
+	if zip_path.exists() and zip_path.stat().st_size > 0:
+		zip_size = zip_path.stat().st_size
+		zip_2_size = zip_path_2.stat().st_size if zip_path_2 and zip_path_2.exists() else 0
+		if zip_size <= max_zip_bytes and (not zip_path_2 or zip_2_size <= max_zip_bytes):
+			return
+
+		zip_path.unlink(missing_ok=True)
+		if zip_path_2 and zip_path_2.exists():
+			zip_path_2.unlink(missing_ok=True)
+
+	user_ids = load_request_user_ids(
+		request_id=request_id,
+		portal_name="SUKOON",
+		request_type="DELETE",
+		logger=logger,
+	)
+	if not user_ids:
+		raise RuntimeError("Bulk delete supporting docs missing: no users found for request")
+
+	with AzureSQLConnection(logger=logger) as db_connection:
+		connection = db_connection.connect()
+		request_documents = _fetch_request_documents_for_users(
+			connection=connection,
+			request_id=request_id,
+			user_ids=user_ids,
+		)
+
+	if not request_documents:
+		raise RuntimeError("Bulk delete supporting docs missing: no documents available for request")
+
+	blob_service = AzureBlobDownloadService(logger=logger)
+	_, errors_by_user, all_downloaded = _download_documents_user_wise(
+		blob_service=blob_service,
+		request_documents=request_documents,
+		destination_root=Path(census_output_path).parent,
+		logger=logger,
+	)
+
+	if not all_downloaded:
+		raise RuntimeError("Bulk delete supporting docs missing: download returned no files")
+
+	compressed_files = _compress_supporting_files(
+		files=all_downloaded,
+		max_bytes=max_zip_bytes,
+		logger=logger,
+	)
+
+	destination_root = Path(census_output_path).parent
+	primary_files, secondary_files = _split_files_for_zip(
+		files=compressed_files,
+		max_bytes=max_zip_bytes,
+	)
+	_build_supporting_zip_file(
+		zip_path=zip_path,
+		downloaded_files=primary_files,
+		destination_root=destination_root,
+		logger=logger,
+	)
+	if zip_path.stat().st_size > max_zip_bytes:
+		raise RuntimeError("Bulk delete supporting zip exceeds 4MB limit")
+
+	if errors_by_user:
+		combined_errors = []
+		for user_id, messages in errors_by_user.items():
+			combined_errors.extend([f"User {user_id}: {message}" for message in messages])
+		reason = " | ".join(combined_errors)[:1000]
+		raise RuntimeError(f"Bulk delete supporting docs download errors: {reason}")
+
+	if secondary_files:
+		if not supporting_zip_path_2:
+			raise RuntimeError("Bulk delete requires second supporting document slot for large files")
+
+		zip_path_2 = Path(supporting_zip_path_2)
+		_build_supporting_zip_file(
+			zip_path=zip_path_2,
+			downloaded_files=secondary_files,
+			destination_root=destination_root,
+			logger=logger,
+		)
+		if zip_path_2.stat().st_size > max_zip_bytes:
+			raise RuntimeError("Bulk delete supporting zip 2 exceeds 4MB limit")
+
+
+def _split_files_for_zip(files: list[Path], max_bytes: int) -> tuple[list[Path], list[Path]]:
+	primary: list[Path] = []
+	secondary: list[Path] = []
+	primary_size = 0
+	secondary_size = 0
+
+	sorted_files = sorted(files, key=lambda item: item.stat().st_size, reverse=True)
+	for file_path in sorted_files:
+		file_size = file_path.stat().st_size
+		if file_size > max_bytes:
+			raise RuntimeError(
+				"Bulk delete supporting doc exceeds 4MB limit: "
+				f"{file_path.name} ({file_size} bytes)"
+			)
+
+		primary_remaining = max_bytes - primary_size
+		secondary_remaining = max_bytes - secondary_size
+		if file_size <= primary_remaining and file_size <= secondary_remaining:
+			if primary_remaining >= secondary_remaining:
+				primary.append(file_path)
+				primary_size += file_size
+			else:
+				secondary.append(file_path)
+				secondary_size += file_size
+			continue
+
+		if file_size <= primary_remaining:
+			primary.append(file_path)
+			primary_size += file_size
+			continue
+
+		if file_size <= secondary_remaining:
+			secondary.append(file_path)
+			secondary_size += file_size
+			continue
+
+		raise RuntimeError("Bulk delete supporting docs exceed 8MB total limit")
+
+	if not primary:
+		return [], []
+
+	return primary, secondary
+
+
+def _compress_supporting_files(
+	files: list[Path],
+	max_bytes: int,
+	logger: logging.Logger,
+) -> list[Path]:
+	compressed: list[Path] = []
+	for file_path in files:
+		if file_path.stat().st_size <= max_bytes:
+			compressed.append(file_path)
+			continue
+
+		compressed_path = _compress_image_file(file_path=file_path, target_bytes=max_bytes, logger=logger)
+		compressed.append(compressed_path)
+
+	max_total_bytes = max_bytes * 2
+	current_total = sum(item.stat().st_size for item in compressed)
+	if current_total <= max_total_bytes:
+		return compressed
+
+	compressible = [item for item in compressed if _is_image_file(item)]
+	if not compressible:
+		return _trim_supporting_files(compressed, max_total_bytes=max_total_bytes, logger=logger)
+
+	compressible_total = sum(item.stat().st_size for item in compressible)
+	needed_reduction = current_total - max_total_bytes
+	target_total = compressible_total - needed_reduction
+	if target_total <= 0:
+		return _trim_supporting_files(compressed, max_total_bytes=max_total_bytes, logger=logger)
+
+	ratio = target_total / compressible_total
+	adjusted: list[Path] = []
+	for file_path in compressed:
+		if not _is_image_file(file_path):
+			adjusted.append(file_path)
+			continue
+
+		current_size = file_path.stat().st_size
+		target_bytes = max(200_000, int(current_size * ratio))
+		adjusted_path = _compress_image_file(
+			file_path=file_path,
+			target_bytes=min(target_bytes, max_bytes),
+			logger=logger,
+		)
+		adjusted.append(adjusted_path)
+
+	final_total = sum(item.stat().st_size for item in adjusted)
+	if final_total > max_total_bytes:
+		return _trim_supporting_files(adjusted, max_total_bytes=max_total_bytes, logger=logger)
+
+	return adjusted
+
+
+def _compress_image_file(file_path: Path, target_bytes: int, logger: logging.Logger) -> Path:
+	if file_path.stat().st_size <= target_bytes:
+		return file_path
+
+	file_ext = file_path.suffix.lower()
+	if file_ext not in {".jpg", ".jpeg", ".png"}:
+		raise RuntimeError(
+			"Bulk delete supporting doc exceeds size limit and cannot be compressed: "
+			f"{file_path.name} ({file_path.stat().st_size} bytes)"
+		)
+
+	try:
+		from PIL import Image
+	except ImportError as exc:
+		raise RuntimeError("Pillow is required to compress large images. Install 'Pillow'.") from exc
+
+	compressed_path = file_path.with_name(f"{file_path.stem}_compressed.jpg")
+	with Image.open(file_path) as img:
+		if img.mode in {"RGBA", "P"}:
+			img = img.convert("RGB")
+
+		quality = 85
+		for _ in range(6):
+			img.save(compressed_path, format="JPEG", quality=quality, optimize=True)
+			if compressed_path.stat().st_size <= target_bytes:
+				logger.info(
+					"Compressed supporting image | "
+					f"Source={file_path.name} | Output={compressed_path.name} | "
+					f"Bytes={compressed_path.stat().st_size}"
+				)
+				return compressed_path
+			quality -= 10
+
+		for _ in range(4):
+			new_width = max(1, int(img.width * 0.9))
+			new_height = max(1, int(img.height * 0.9))
+			img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+			img.save(compressed_path, format="JPEG", quality=max(quality, 70), optimize=True)
+			if compressed_path.stat().st_size <= target_bytes:
+				logger.info(
+					"Compressed supporting image after resize | "
+					f"Source={file_path.name} | Output={compressed_path.name} | "
+					f"Bytes={compressed_path.stat().st_size}"
+				)
+				return compressed_path
+
+	if compressed_path.stat().st_size > target_bytes:
+		raise RuntimeError(
+			"Compressed image still exceeds target limit: "
+			f"{compressed_path.name} ({compressed_path.stat().st_size} bytes)"
+		)
+
+	return compressed_path
+
+
+def _is_image_file(file_path: Path) -> bool:
+	return file_path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+
+
+def _trim_supporting_files(
+	files: list[Path],
+	max_total_bytes: int,
+	logger: logging.Logger,
+) -> list[Path]:
+	remaining = list(files)
+	total_bytes = sum(item.stat().st_size for item in remaining)
+	if total_bytes <= max_total_bytes:
+		return remaining
+
+	drop_prefixes = ("OTHERS", "UNKNOWN", "PHOTO", "E_VISA", "PASSPORT")
+	for prefix in drop_prefixes:
+		candidates = [
+			item for item in list(remaining)
+			if _document_type_from_filename(item).startswith(prefix)
+		]
+		for item in candidates:
+			remaining.remove(item)
+			total_bytes -= item.stat().st_size
+			logger.warning(
+				"Skipping supporting doc to fit 8MB total limit | "
+				f"File={item.name}"
+			)
+			if total_bytes <= max_total_bytes:
+				return remaining
+
+	raise RuntimeError("Bulk delete supporting docs exceed 8MB total limit")
+
+
+def _document_type_from_filename(file_path: Path) -> str:
+	stem = file_path.stem.upper().replace("_COMPRESSED", "")
+	if "_" in stem and stem.rsplit("_", 1)[-1].isdigit():
+		stem = stem.rsplit("_", 1)[0]
+	return stem
+
+
+def _build_supporting_zip_file(
+	zip_path: Path,
+	downloaded_files: list[Path],
+	destination_root: Path,
+	logger: logging.Logger,
+) -> None:
+	zip_path.parent.mkdir(parents=True, exist_ok=True)
+	with ZipFile(zip_path, mode="w", compression=ZIP_DEFLATED) as zip_file:
+		for file_path in downloaded_files:
+			arcname = Path(file_path).relative_to(destination_root).as_posix()
+			zip_file.write(file_path, arcname=arcname)
+
+	logger.info(f"Bulk supporting zip created: {zip_path}")
 
 
 def _open_census_in_excel_and_save(census_path: str | Path, logger: logging.Logger) -> None:
@@ -279,13 +629,13 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
 	if request_upper == "ADD" and action_upper in {"INDIVIDUAL", "MANUAL"}:
 		return "add_individual"
 
-	if request_upper == "ADD" and action_upper == "BATCH":
+	if request_upper == "ADD" and action_upper in {"BATCH", "BULK"}:
 		return "add_batch"
 
 	if request_upper == "DELETE" and action_upper in {"INDIVIDUAL", "MANUAL"}:
 		return "delete_manual"
 
-	if request_upper == "DELETE" and action_upper == "BATCH":
+	if request_upper == "DELETE" and action_upper in {"BATCH", "BULK"}:
 		return "delete_batch"
 
 	raise NotImplementedError(
@@ -462,6 +812,13 @@ async def run(
 				)
 
 				if batch_result.invalid_members:
+					invalid_members_csv = run_dir / "batch_add_invalid_members.csv"
+					_write_invalid_members_csv(
+						invalid_members=batch_result.invalid_members,
+						output_path=invalid_members_csv,
+						logger=logger,
+					)
+
 					sync_summary = MemberErrorSyncSummary(mapped_rows=0, updated_users=0, unmapped_rows=0)
 					if use_database and resolved_request_id:
 						sync_summary = sync_batch_validation_errors_to_portal_status(
@@ -501,7 +858,7 @@ async def run(
 				await page.screenshot(path=str(success_shot), full_page=True)
 				logger.info(f"Saved manual delete success screenshot: {success_shot}")
 
-			elif process_key == "delete_batch":
+			elif process_key in {"delete_batch", "delete_bulk"}:
 				await batch_delete_member(
 					page=page,
 					delete_selectors=batch_delete_selectors,
