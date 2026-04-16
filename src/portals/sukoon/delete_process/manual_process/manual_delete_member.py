@@ -20,7 +20,8 @@ def _assert_not_logged_out(page: Page, step: str):
 async def _select_company(page: Page, selectors: Dict[str, Any], values: Dict[str, Any], logger: logging.Logger):
     company_name = str(values.get("company_name") or "").strip()
     if not company_name:
-        raise ValueError("company_name is required in manual_delete_member.json")
+        logger.warning("Company name missing for manual delete; skipping company selection")
+        return
 
     dropdown_toggle = ensure_selector_present(selectors, "company_dropdown_toggle", logger)
     await click_element(
@@ -238,6 +239,7 @@ async def manual_delete_member(
         values=run_values,
         logger=logger,
         enforce_session_active=True,
+        skip_empty_values=True,
     )
 
     if bool(delete_values.get("click_clear_after_fill", True)):

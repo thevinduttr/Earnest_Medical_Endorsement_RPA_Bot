@@ -57,6 +57,7 @@ async def fill_upload_member_files_section(
         values=run_values,
         logger=logger,
         enforce_session_active=True,
+        skip_empty_values=True,
     )
 
     if bool(values.get("click_reset_after_upload", False)):

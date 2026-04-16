@@ -85,3 +85,12 @@ def parse_request_id(selector_data: Dict[str, Any]) -> str | None:
 
     request_id = str(raw_value).strip()
     return request_id or None
+
+
+def parse_user_id(selector_data: Dict[str, Any]) -> str | None:
+    raw_value = selector_data.get("UserId")
+    if raw_value is None:
+        return None
+
+    user_id = str(raw_value).strip()
+    return user_id or None

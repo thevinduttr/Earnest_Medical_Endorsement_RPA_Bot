@@ -36,6 +36,8 @@ async def fill_profile_section(
             "label": "Click GO",
             "wait_for_load": True,
             "post_wait_ms": 350,
+            "required": False,
+            "fail_on_validation_error": False,
         },
         {"type": "fill", "key": "first_name", "label": "First Name", "value_key": "first_name"},
         {
@@ -158,6 +160,7 @@ async def fill_profile_section(
         values=values,
         logger=logger,
         enforce_session_active=True,
+        skip_empty_values=True,
     )
 
     logger.info("Profile section completed")

@@ -62,6 +62,7 @@ async def fill_communication_details_section(
         values=values,
         logger=logger,
         enforce_session_active=True,
+        skip_empty_values=True,
     )
 
     logger.info("Communication details section completed")

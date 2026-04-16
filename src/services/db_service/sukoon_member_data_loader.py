@@ -14,7 +14,7 @@ PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
     "add_individual": {
         "company_name": "PolicyNumber",
         "principal_radio": "MemberType",
-        "employee_number": "StaffId",
+        "employee_number": "EmpNo",
         "first_name": "FirstName",
         "middle_name": "MiddleName",
         "last_name": "LastName",
@@ -145,7 +145,7 @@ def _normalize_commission(value: Any) -> Optional[str]:
     return str(value).strip() or None
 
 
-def _build_fetch_query(action_variants: Sequence[str], has_request_id: bool) -> str:
+def _build_fetch_query(action_variants: Sequence[str], has_request_id: bool, has_user_id: bool) -> str:
     placeholders = ", ".join("?" for _ in action_variants)
     where_parts = [
         "UPPER(PortalName) = ?",
@@ -155,6 +155,8 @@ def _build_fetch_query(action_variants: Sequence[str], has_request_id: bool) -> 
 
     if has_request_id:
         where_parts.append("RequestId = ?")
+    if has_user_id:
+        where_parts.append("UserId = ?")
 
     where_sql = "\n      AND ".join(where_parts)
     return f"""
@@ -170,10 +172,15 @@ def _fetch_member_row(
     request_type: str,
     action_type: str,
     request_id: Optional[str],
+    user_id: Optional[str],
     logger=None,
 ) -> Optional[Dict[str, Any]]:
     action_variants = _resolve_action_variants(action_type)
-    query = _build_fetch_query(action_variants, has_request_id=bool(request_id))
+    query = _build_fetch_query(
+        action_variants,
+        has_request_id=bool(request_id),
+        has_user_id=bool(user_id),
+    )
 
     query_params = [
         _normalize_upper(portal_name),
@@ -182,6 +189,8 @@ def _fetch_member_row(
     ]
     if request_id:
         query_params.append(str(request_id).strip())
+    if user_id:
+        query_params.append(str(user_id).strip())
 
     with AzureSQLConnection(logger=logger) as db_connection:
         connection = db_connection.connect()
@@ -217,6 +226,13 @@ def _map_row_to_process_values(process_key: str, row: Dict[str, Any]) -> Dict[st
         if mapped_value is not None:
             values[json_key] = mapped_value
 
+    if process_key == "add_individual" and not values.get("employee_number"):
+        for column_name in ("EmpNo", "StaffId", "HealthCardNumber"):
+            fallback_value = _normalize_text_value(row.get(column_name))
+            if fallback_value:
+                values["employee_number"] = fallback_value
+                break
+
     # Manual delete form uses the same field for health card input; fallback to StaffId if empty.
     if process_key == "delete_manual" and not values.get("employee_number"):
         fallback_value = _normalize_text_value(row.get("StaffId"))
@@ -232,6 +248,7 @@ def load_member_process_values(
     action_type: str,
     process_key: str,
     request_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     logger=None,
 ) -> MemberProcessValues:
     row = _fetch_member_row(
@@ -239,13 +256,15 @@ def load_member_process_values(
         request_type=request_type,
         action_type=action_type,
         request_id=request_id,
+        user_id=user_id,
         logger=logger,
     )
     if row is None:
         request_filter = f" and RequestId={request_id}" if request_id else ""
+        user_filter = f" and UserId={user_id}" if user_id else ""
         raise ValueError(
             "No record found in EndorsementRequestsMemberData for "
-            f"PortalName={portal_name}, RequestType={request_type}, ActionType={action_type}{request_filter}"
+            f"PortalName={portal_name}, RequestType={request_type}, ActionType={action_type}{request_filter}{user_filter}"
         )
 
     process_values = _map_row_to_process_values(process_key=process_key, row=row)
@@ -267,15 +286,22 @@ def _normalize_action_for_selector(action_type: Any) -> str:
     return action
 
 
-def load_process_selector_by_request_id(request_id: str, logger=None) -> Dict[str, str]:
+def load_process_selector_by_request_id(request_id: str, user_id: Optional[str] = None, logger=None) -> Dict[str, str]:
     request_id_text = str(request_id or "").strip()
     if not request_id_text:
         raise ValueError("request_id is required to load process selector from DB")
+    user_id_text = str(user_id or "").strip() if user_id is not None else ""
+
+    where_sql = "RequestId = ?"
+    query_params: list[Any] = [request_id_text]
+    if user_id_text:
+        where_sql += " AND UserId = ?"
+        query_params.append(user_id_text)
 
     query = f"""
 SELECT TOP (1) PortalName, RequestType, ActionType, RequestId
 FROM {TABLE_NAME}
-WHERE RequestId = ?
+WHERE {where_sql}
 ORDER BY CreatedAt DESC, Id DESC
 """
 
@@ -283,7 +309,7 @@ ORDER BY CreatedAt DESC, Id DESC
         connection = db_connection.connect()
         cursor = connection.cursor()
         try:
-            cursor.execute(query, [request_id_text])
+            cursor.execute(query, query_params)
             row = cursor.fetchone()
             if row is None:
                 raise ValueError(

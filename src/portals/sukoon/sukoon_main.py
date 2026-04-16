@@ -33,6 +33,9 @@ from src.utils.load_data import load_json_file, load_section_from_yaml, load_yam
 from src.utils.upload_file_paths import get_upload_paths
 
 
+STATUS_TABLE = "[dbo].[EndorsementRequestStatus]"
+
+
 def _make_run_id() -> str:
 	return datetime.now().strftime("run_%Y-%m-%d_%H-%M-%S")
 
@@ -119,11 +122,57 @@ def _merge_values(base_values: dict, override_values: dict) -> dict:
 	return merged
 
 
+def _update_portal_status_for_user(
+	*,
+	request_id: str | None,
+	user_id: str | None,
+	status: str,
+	failure_reason: str | None,
+	logger: logging.Logger,
+) -> None:
+	request_id = str(request_id or "").strip()
+	user_id = str(user_id or "").strip()
+	if not request_id or not user_id:
+		return
+
+	status_value = str(status or "").strip().upper()
+	if not status_value:
+		return
+
+	reason_text = str(failure_reason or "").strip()
+	if len(reason_text) > 1000:
+		reason_text = reason_text[:1000]
+
+	query = f"""
+UPDATE {STATUS_TABLE}
+SET PortalStatus = ?,
+    PortalFailureReason = ?,
+    UpdatedAt = SYSUTCDATETIME()
+WHERE RequestId = ?
+  AND UserId = ?
+"""
+
+	with AzureSQLConnection(logger=logger) as db_connection:
+		connection = db_connection.connect()
+		cursor = connection.cursor()
+		try:
+			cursor.execute(query, [status_value, reason_text or None, request_id, user_id])
+			connection.commit()
+		finally:
+			cursor.close()
+
+	logger.info(
+		"PortalStatus updated for user | "
+		f"RequestId={request_id} | UserId={user_id} | Status={status_value}"
+	)
+
+
 def _load_configuration(
 	request_type: str,
 	action_type: str,
 	process_key: str,
 	request_id: str | None,
+	user_id: str | None,
 	use_database: bool,
 	logger: logging.Logger,
 ):
@@ -160,6 +209,7 @@ def _load_configuration(
 			action_type=action_type,
 			process_key=process_key,
 			request_id=request_id,
+			user_id=user_id if process_key in {"add_individual", "delete_manual"} else None,
 			logger=logger,
 		)
 		logger.info(
@@ -170,11 +220,11 @@ def _load_configuration(
 		resolved_request_id = db_result.request_id
 
 		if process_key == "add_individual":
-			manual_add_values = _merge_values(manual_add_values, db_result.process_values)
+			manual_add_values = dict(db_result.process_values)
 		elif process_key == "add_batch":
 			batch_add_values = _merge_values(batch_add_values, db_result.process_values)
 		elif process_key == "delete_manual":
-			manual_delete_values = _merge_values(manual_delete_values, db_result.process_values)
+			manual_delete_values = dict(db_result.process_values)
 		elif process_key in {"delete_batch", "delete_bulk"}:
 			batch_delete_values = _merge_values(batch_delete_values, db_result.process_values)
 		else:
@@ -267,6 +317,105 @@ def _prepare_batch_census_before_portal(
 			upload_paths=upload_paths,
 			logger=logger,
 		)
+
+
+def _prepare_manual_supporting_files(
+	*,
+	process_key: str,
+	request_id: str | None,
+	user_id: str | None,
+	upload_paths: dict,
+	logger: logging.Logger,
+) -> None:
+	if process_key not in {"add_individual", "delete_manual"}:
+		return
+
+	request_id = str(request_id or "").strip()
+	user_id = str(user_id or "").strip()
+	if not request_id or not user_id:
+		logger.warning("Manual supporting docs skipped: RequestId/UserId missing")
+		return
+
+	if process_key == "add_individual":
+		file_key_1 = "supporting_file_1"
+		file_key_2 = "supporting_file_2"
+		default_root = Path("data/attachments/samples/sukoon/add/individual")
+	else:
+		file_key_1 = "delete_supporting_file_1"
+		file_key_2 = "delete_supporting_file_2"
+		default_root = Path("data/attachments/samples/sukoon/delete/manual")
+
+	primary_path = str(upload_paths.get(file_key_1) or "").strip()
+	secondary_path = str(upload_paths.get(file_key_2) or "").strip()
+	if primary_path:
+		destination_root = Path(primary_path).resolve().parent
+	elif secondary_path:
+		destination_root = Path(secondary_path).resolve().parent
+	else:
+		destination_root = default_root
+
+	with AzureSQLConnection(logger=logger) as db_connection:
+		connection = db_connection.connect()
+		request_documents = _fetch_request_documents_for_users(
+			connection=connection,
+			request_id=request_id,
+			user_ids=[user_id],
+		)
+
+	if not request_documents:
+		logger.warning(
+			"Manual supporting docs not found in DB | "
+			f"RequestId={request_id} | UserId={user_id}"
+		)
+		return
+
+	blob_service = AzureBlobDownloadService(logger=logger)
+	_, errors_by_user, all_downloaded = _download_documents_user_wise(
+		blob_service=blob_service,
+		request_documents=request_documents,
+		destination_root=destination_root,
+		logger=logger,
+	)
+
+	if errors_by_user:
+		combined_errors = []
+		for member_id, messages in errors_by_user.items():
+			combined_errors.extend([f"User {member_id}: {message}" for message in messages])
+		logger.warning(
+			"Manual supporting docs download errors | "
+			f"RequestId={request_id} | UserId={user_id} | "
+			f"Errors={" | ".join(combined_errors)[:500]}"
+		)
+
+	if not all_downloaded:
+		logger.warning(
+			"Manual supporting docs download returned no files | "
+			f"RequestId={request_id} | UserId={user_id}"
+		)
+		return
+
+	if len(all_downloaded) <= 2:
+		upload_paths[file_key_1] = str(all_downloaded[0])
+		upload_paths[file_key_2] = str(all_downloaded[1]) if len(all_downloaded) > 1 else ""
+		logger.info(
+			"Manual supporting docs mapped to upload paths | "
+			f"RequestId={request_id} | UserId={user_id} | Count={len(all_downloaded)}"
+		)
+		return
+
+	zip_path = destination_root / f"supporting_documents_{request_id}_{user_id}.zip"
+	_build_supporting_zip_file(
+		zip_path=zip_path,
+		downloaded_files=all_downloaded,
+		destination_root=destination_root,
+		logger=logger,
+	)
+	upload_paths[file_key_1] = str(zip_path)
+	upload_paths[file_key_2] = ""
+	logger.info(
+		"Manual supporting docs zipped for upload | "
+		f"RequestId={request_id} | UserId={user_id} | Files={len(all_downloaded)}"
+	)
 
 
 def _supporting_zip_for_bulk_delete(
@@ -647,36 +796,56 @@ async def run(
 	request_type: str,
 	action_type: str,
 	request_id: str | None = None,
+	user_id: str | None = None,
 	use_database: bool = True,
 ):
 	run_id = _make_run_id()
 	resolved_request_id = _normalize_request_id(request_id)
 	logger = _init_logger(run_id=run_id, request_id=resolved_request_id)
 	process_key = _resolve_process_key(request_type=request_type, action_type=action_type)
-	logger.info(f"Input source | UseDatabase={use_database} | RequestId={request_id or 'LATEST'}")
-
-	(
-		config,
-		login_selectors,
-		dashboard_selectors,
-		manual_add_selectors,
-		batch_add_selectors,
-		manual_delete_selectors,
-		batch_delete_selectors,
-		login_values,
-		manual_add_values,
-		batch_add_values,
-		manual_delete_values,
-		batch_delete_values,
-		resolved_request_id,
-	) = _load_configuration(
-		request_type=request_type,
-		action_type=action_type,
-		process_key=process_key,
-		request_id=request_id,
-		use_database=use_database,
-		logger=logger,
+	logger.info(
+		"Input source | "
+		f"UseDatabase={use_database} | RequestId={request_id or 'LATEST'} | "
+		f"UserId={str(user_id or '').strip() or '-'}"
 	)
+
+	if process_key in {"add_individual", "delete_manual"} and not str(user_id or "").strip():
+		raise ValueError("UserId is required for Sukoon manual add/delete processes")
+
+	try:
+		(
+			config,
+			login_selectors,
+			dashboard_selectors,
+			manual_add_selectors,
+			batch_add_selectors,
+			manual_delete_selectors,
+			batch_delete_selectors,
+			login_values,
+			manual_add_values,
+			batch_add_values,
+			manual_delete_values,
+			batch_delete_values,
+			resolved_request_id,
+		) = _load_configuration(
+			request_type=request_type,
+			action_type=action_type,
+			process_key=process_key,
+			request_id=request_id,
+			user_id=user_id,
+			use_database=use_database,
+			logger=logger,
+		)
+	except Exception as exc:
+		if use_database and process_key in {"add_individual", "delete_manual"}:
+			_update_portal_status_for_user(
+				request_id=request_id,
+				user_id=user_id,
+				status="FAILED",
+				failure_reason=str(exc),
+				logger=logger,
+			)
+		raise
 
 	resolved_request_id = _normalize_request_id(resolved_request_id)
 	logger = _init_logger(run_id=run_id, request_id=resolved_request_id)
@@ -689,13 +858,31 @@ async def run(
 	upload_paths = get_upload_paths("SUKOON", str(request_type), str(action_type))
 
 	if use_database:
-		_prepare_batch_census_before_portal(
-			process_key=process_key,
-			request_type=request_type,
-			resolved_request_id=resolved_request_id,
-			upload_paths=upload_paths,
-			logger=logger,
-		)
+		try:
+			_prepare_batch_census_before_portal(
+				process_key=process_key,
+				request_type=request_type,
+				resolved_request_id=resolved_request_id,
+				upload_paths=upload_paths,
+				logger=logger,
+			)
+			_prepare_manual_supporting_files(
+				process_key=process_key,
+				request_id=resolved_request_id,
+				user_id=user_id,
+				upload_paths=upload_paths,
+				logger=logger,
+			)
+		except Exception as exc:
+			if process_key in {"add_individual", "delete_manual"}:
+				_update_portal_status_for_user(
+					request_id=resolved_request_id,
+					user_id=user_id,
+					status="FAILED",
+					failure_reason=str(exc),
+					logger=logger,
+				)
+			raise
 
 	browser_config = config.get("browser", {})
 	headless = bool(browser_config.get("headless", False))
@@ -712,9 +899,8 @@ async def run(
 		runtime_engine = "chromium"
 		default_channel = "chrome"
 	browser_channel = str(browser_config.get("channel") or default_channel).strip() or None
-	persistent_context = bool(browser_config.get("persistent_context", True))
-	user_data_dir_value = str(browser_config.get("user_data_dir") or "data/browser_profiles/sukoon").strip()
-	user_data_dir = str(Path(user_data_dir_value).resolve())
+	persistent_context = False
+	user_data_dir = ""
 
 	logger.info(f"Starting Sukoon flow | run_id={run_id}")
 	logger.info(f"Selected process | RequestType={request_type} | ActionType={action_type} | ProcessKey={process_key}")
@@ -802,6 +988,15 @@ async def run(
 				await page.screenshot(path=str(success_shot), full_page=True)
 				logger.info(f"Saved manual add success screenshot: {success_shot}")
 
+				if use_database:
+					_update_portal_status_for_user(
+						request_id=resolved_request_id,
+						user_id=user_id,
+						status="SUCCESS",
+						failure_reason=None,
+						logger=logger,
+					)
+
 			elif process_key == "add_batch":
 				batch_result = await batch_add_member(
 					page=page,
@@ -858,6 +1053,15 @@ async def run(
 				await page.screenshot(path=str(success_shot), full_page=True)
 				logger.info(f"Saved manual delete success screenshot: {success_shot}")
 
+				if use_database:
+					_update_portal_status_for_user(
+						request_id=resolved_request_id,
+						user_id=user_id,
+						status="SUCCESS",
+						failure_reason=None,
+						logger=logger,
+					)
+
 			elif process_key in {"delete_batch", "delete_bulk"}:
 				await batch_delete_member(
 					page=page,
@@ -876,6 +1080,14 @@ async def run(
 
 		except Exception as exc:
 			logger.error(f"Sukoon run failed: {exc}")
+			if use_database and process_key in {"add_individual", "delete_manual"}:
+				_update_portal_status_for_user(
+					request_id=resolved_request_id,
+					user_id=user_id,
+					status="FAILED",
+					failure_reason=str(exc),
+					logger=logger,
+				)
 			if page is not None:
 				try:
 					error_shot = run_dir / "login_error.png"

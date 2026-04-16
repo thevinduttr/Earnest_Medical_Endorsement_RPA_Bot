@@ -62,6 +62,7 @@ async def fill_sponsor_details_section(
         values=values,
         logger=logger,
         enforce_session_active=True,
+        skip_empty_values=True,
     )
 
     logger.info("Sponsor details section completed")

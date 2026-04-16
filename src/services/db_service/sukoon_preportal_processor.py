@@ -168,6 +168,45 @@ ORDER BY RequestId ASC, UserId ASC
     return dict(grouped)
 
 
+def fetch_pending_requests(
+    *,
+    target_request_id: str | None = None,
+    target_user_id: str | None = None,
+    logger=None,
+) -> Dict[str, List[str]]:
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        grouped = _fetch_pending_requests(connection=connection, target_request_id=target_request_id)
+
+    if target_user_id:
+        filtered: Dict[str, List[str]] = {}
+        for request_id, user_ids in grouped.items():
+            if str(target_user_id) in user_ids:
+                filtered[request_id] = [str(target_user_id)]
+            return filtered
+
+    return grouped
+
+
+def update_portal_status_for_users(
+    *,
+    request_id: str,
+    user_ids: Iterable[str],
+    status: str,
+    failure_reason: str | None,
+    logger=None,
+) -> None:
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        _update_portal_status_for_users(
+            connection=connection,
+            request_id=request_id,
+            user_ids=user_ids,
+            status=status,
+            failure_reason=failure_reason,
+        )
+
+
 def _update_portal_status_for_users(
     connection,
     request_id: str,
