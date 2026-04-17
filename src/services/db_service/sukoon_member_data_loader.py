@@ -79,10 +79,12 @@ def _normalize_upper(value: Any) -> str:
 
 def _resolve_action_variants(action_type: str) -> Sequence[str]:
     action = _normalize_upper(action_type)
-    if action == "INDIVIDUAL":
-        return ("INDIVIDUAL", "MANUAL")
+    if action in {"INDIVIDUAL", "INDIVIUAL", "MANUAL", "MANNUAL"}:
+        return ("INDIVIDUAL", "INDIVIUAL", "MANUAL", "MANNUAL")
     if action == "BATCH":
-        return ("BATCH", "BULK", "INDIVIDUAL", "MANUAL")
+        return ("BATCH",)
+    if action == "BULK":
+        return ("BULK",)
     return (action,)
 
 
@@ -279,10 +281,10 @@ def load_member_process_values(
 
 def _normalize_action_for_selector(action_type: Any) -> str:
     action = _normalize_upper(action_type)
-    if action == "INDIVIDUAL":
-        return "MANUAL"
-    if action == "BULK":
-        return "BATCH"
+    if action in {"INDIVIDUAL", "INDIVIUAL", "MANUAL", "MANNUAL"}:
+        return "INDIVIDUAL"
+    if action in {"BATCH", "BULK"}:
+        return action
     return action
 
 

@@ -16,3 +16,9 @@ browser:
     width: 1920
     height: 945
 
+worker:
+  poll_interval_seconds: 10
+  failure_sleep_seconds: 2
+  loop_sleep_seconds: 0.2
+  clear_attachments_each_cycle: true
+

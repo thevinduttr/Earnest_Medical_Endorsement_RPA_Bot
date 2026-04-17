@@ -22,6 +22,8 @@ async def fill_profile_section(
             "key": "principal_radio",
             "label": "Select Principal",
             "wait_for_load": False,
+            "required": False,
+            "timeout_ms": 8000,
         },
         {
             "type": "fill",

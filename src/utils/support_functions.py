@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Sequence
 import asyncio
+from difflib import SequenceMatcher
 import logging
 from pathlib import Path
 from datetime import datetime
+import re
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
@@ -423,6 +425,19 @@ async def select_field(
     locator = await wait_for_visible(page, selector, label, logger, timeout_ms=timeout_ms)
     value_text = str(value).strip()
 
+    def _normalize_option_text(text: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower())
+        return " ".join(cleaned.split())
+
+    def _score_match(target: str, candidate: str) -> float:
+        if not target or not candidate:
+            return 0.0
+        if target == candidate:
+            return 1.0
+        if target in candidate or candidate in target:
+            return 0.85
+        return SequenceMatcher(None, target, candidate).ratio()
+
     selected = False
     for option_args in ({"value": value_text}, {"label": value_text}):
         try:
@@ -439,8 +454,71 @@ async def select_field(
         except Exception:
             selected = False
 
+    options = []
     if not selected:
-        raise ValueError(f"{label}: unable to select option '{value_text}'")
+        try:
+            options = await locator.evaluate(
+                """
+                (el) => Array.from(el.options || []).map((opt) => ({
+                    value: opt.value || '',
+                    label: (opt.textContent || '').trim(),
+                }))
+                """
+            )
+        except Exception:
+            options = []
+
+    if not selected and options:
+        normalized_target = _normalize_option_text(value_text)
+        for option in options:
+            label_text = option.get("label", "")
+            value_text_opt = option.get("value", "")
+            if _normalize_option_text(label_text) == normalized_target:
+                try:
+                    await locator.select_option(value=value_text_opt or None, label=label_text)
+                    selected = True
+                    logger.info(
+                        f"{label}: selected case-insensitive match '{label_text}'"
+                    )
+                    break
+                except Exception:
+                    selected = False
+
+    if not selected and options:
+        best_option = None
+        best_score = 0.0
+        normalized_target = _normalize_option_text(value_text)
+        for option in options:
+            normalized_label = _normalize_option_text(option.get("label", ""))
+            normalized_value = _normalize_option_text(option.get("value", ""))
+            label_score = _score_match(normalized_target, normalized_label)
+            value_score = _score_match(normalized_target, normalized_value)
+            score = max(label_score, value_score)
+            if score > best_score:
+                best_score = score
+                best_option = option
+
+        if best_option and best_score >= 0.6:
+            try:
+                if best_option.get("value"):
+                    await locator.select_option(value=best_option["value"])
+                else:
+                    await locator.select_option(label=best_option.get("label", ""))
+                selected = True
+                logger.info(
+                    f"{label}: selected closest match '{best_option.get('label')}' "
+                    f"for requested '{value_text}'"
+                )
+            except Exception:
+                selected = False
+
+    if not selected:
+        available = [opt.get("label") for opt in (options or []) if opt.get("label")]
+        preview = ", ".join(available[:10])
+        raise ValueError(
+            f"{label}: unable to select option '{value_text}'. "
+            f"Available: {preview}"
+        )
 
     await _wait_after_action(
         page,
@@ -534,6 +612,7 @@ async def run_actions(
     logger: logging.Logger,
     default_timeout_ms: int = 20000,
     enforce_session_active: bool = False,
+    skip_empty_values: bool = False,
 ):
     """
     Execute declarative actions using locator keys and value keys.
@@ -547,6 +626,13 @@ async def run_actions(
     - {"type": "upload", "key": "supporting_document", "value_key": "supporting_file_1", "label": "Upload File"}
     - {"type": "wait_visible", "key": "policy_servicing", "label": "Dashboard Ready"}
     """
+    def _is_empty_value(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, (list, tuple, set)):
+            return len(value) == 0 or all(str(item or "").strip() == "" for item in value)
+        return str(value).strip() == ""
+
     for index, action in enumerate(actions, start=1):
         action_type = str(action.get("type", "")).lower().strip()
         label = action.get("label") or f"Action {index}"
@@ -575,6 +661,9 @@ async def run_actions(
                     if not value_key:
                         raise ValueError(f"{label}: value or value_key is required")
                     value = values.get(value_key)
+                if skip_empty_values and _is_empty_value(value):
+                    logger.warning(f"{label}: empty value, skipping")
+                    continue
                 mask = bool(action.get("mask", False))
                 await fill_field(
                     page,
@@ -596,6 +685,9 @@ async def run_actions(
                     if not value_key:
                         raise ValueError(f"{label}: value or value_key is required")
                     value = values.get(value_key)
+                if skip_empty_values and _is_empty_value(value):
+                    logger.warning(f"{label}: empty value, skipping")
+                    continue
 
                 await fill_date_field(
                     page,
@@ -637,6 +729,9 @@ async def run_actions(
                     if not value_key:
                         raise ValueError(f"{label}: value or value_key is required")
                     value = values.get(value_key)
+                if skip_empty_values and _is_empty_value(value):
+                    logger.warning(f"{label}: empty value, skipping")
+                    continue
 
                 await select_field(
                     page,
@@ -670,6 +765,9 @@ async def run_actions(
                     if not value_key:
                         raise ValueError(f"{label}: value or value_key is required")
                     value = values.get(value_key)
+                if skip_empty_values and _is_empty_value(value):
+                    logger.warning(f"{label}: empty value, skipping")
+                    continue
 
                 await upload_file(
                     page,

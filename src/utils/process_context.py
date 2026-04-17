@@ -4,16 +4,17 @@ from typing import Any, Dict, Tuple
 
 
 _ALLOWED_REQUEST_TYPES = {"ADD", "DELETE"}
-_ALLOWED_ACTION_TYPES = {"INDIVIDUAL", "BATCH"}
+_ALLOWED_ACTION_TYPES = {"INDIVIDUAL", "BATCH", "BULK"}
 _ALLOWED_PORTALS = {"SUKOON", "NAS"}
 _ACTION_ALIASES = {
     "MANUAL": "INDIVIDUAL",
     "MANNUAL": "INDIVIDUAL",
     "INDIVIDUAL": "INDIVIDUAL",
+    "INDIVIUAL": "INDIVIDUAL",
     "INDIVIDUAL(MANUAL)": "INDIVIDUAL",
     "INDIVIDUAL_MANUAL": "INDIVIDUAL",
     "BATCH": "BATCH",
-    "BULK": "BATCH",
+    "BULK": "BULK",
 }
 
 
@@ -40,7 +41,7 @@ def parse_process_selector(selector_data: Dict[str, Any]) -> Tuple[str, str, str
 
     if action_type not in _ALLOWED_ACTION_TYPES:
         raise ValueError(
-            f"Invalid ActionType '{action_type_raw}'. Supported: INDIVIDUAL (or MANUAL), BATCH"
+            f"Invalid ActionType '{action_type_raw}'. Supported: INDIVIDUAL (or MANUAL), BATCH, BULK"
         )
 
     return portal_name, request_type, action_type

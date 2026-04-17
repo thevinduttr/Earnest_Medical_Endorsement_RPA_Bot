@@ -14,8 +14,9 @@ from src.portals.sukoon.add_process.manual_process.manual_add_member import manu
 from src.portals.sukoon.delete_process.batch_process.batch_delete_member import batch_delete_member
 from src.portals.sukoon.delete_process.manual_process.manual_delete_member import manual_delete_member
 from src.portals.sukoon.main_process.login import login
-from src.services.db_service.sukoon_batch_census_builder import (
-	build_batch_census_file,
+from src.services.census_service.sukoon.addition_census import build_addition_census_file
+from src.services.census_service.sukoon.deletion_census import (
+	build_deletion_census_file,
 	load_request_user_ids,
 )
 from src.services.blob_service.azure_blob_download_service import AzureBlobDownloadService
@@ -122,6 +123,30 @@ def _merge_values(base_values: dict, override_values: dict) -> dict:
 	return merged
 
 
+def _is_blank_value(value: object) -> bool:
+	if value is None:
+		return True
+	if isinstance(value, str):
+		return not value.strip()
+	return False
+
+
+def _validate_manual_add_values(values: dict, logger: logging.Logger) -> None:
+	required_fields = {
+		"marital_status": "Marital Status",
+		"unique_id_visa": "Unique ID (Visa)",
+		"category": "Category",
+		"residential_location": "Residential Location",
+		"work_location": "Work Location",
+	}
+
+	missing = [label for key, label in required_fields.items() if _is_blank_value(values.get(key))]
+	if missing:
+		missing_text = ", ".join(missing)
+		logger.error(f"Manual add missing required values: {missing_text}")
+		raise ValueError(f"Manual add missing required values: {missing_text}")
+
+
 def _update_portal_status_for_user(
 	*,
 	request_id: str | None,
@@ -164,6 +189,52 @@ WHERE RequestId = ?
 	logger.info(
 		"PortalStatus updated for user | "
 		f"RequestId={request_id} | UserId={user_id} | Status={status_value}"
+	)
+
+
+def _update_portal_status_for_users(
+	*,
+	request_id: str | None,
+	user_ids: list[str] | None,
+	status: str,
+	failure_reason: str | None,
+	logger: logging.Logger,
+) -> None:
+	request_id = str(request_id or "").strip()
+	normalized_user_ids = [str(user_id).strip() for user_id in (user_ids or []) if str(user_id).strip()]
+	if not request_id or not normalized_user_ids:
+		return
+
+	status_value = str(status or "").strip().upper()
+	if not status_value:
+		return
+
+	reason_text = str(failure_reason or "").strip()
+	if len(reason_text) > 1000:
+		reason_text = reason_text[:1000]
+
+	placeholders = ", ".join("?" for _ in normalized_user_ids)
+	query = f"""
+UPDATE {STATUS_TABLE}
+SET PortalStatus = ?,
+    PortalFailureReason = ?,
+    UpdatedAt = SYSUTCDATETIME()
+WHERE RequestId = ?
+  AND UserId IN ({placeholders})
+"""
+
+	with AzureSQLConnection(logger=logger) as db_connection:
+		connection = db_connection.connect()
+		cursor = connection.cursor()
+		try:
+			cursor.execute(query, [status_value, reason_text or None, request_id, *normalized_user_ids])
+			connection.commit()
+		finally:
+			cursor.close()
+
+	logger.info(
+		"PortalStatus updated for users | "
+		f"RequestId={request_id} | Users={len(normalized_user_ids)} | Status={status_value}"
 	)
 
 
@@ -249,13 +320,19 @@ def _load_configuration(
 
 def _prepare_batch_census_before_portal(
 	process_key: str,
+	action_type: str,
 	request_type: str,
 	resolved_request_id: str | None,
+	request_user_ids: list[str] | None,
 	upload_paths: dict,
 	logger: logging.Logger,
 ):
+	# Step 01: Handle only non-manual processes here.
 	if process_key not in {"add_batch", "delete_batch", "delete_bulk"}:
 		return
+
+	is_bulk_action = str(action_type or "").strip().upper() == "BULK"
+	request_user_ids = [str(user_id).strip() for user_id in (request_user_ids or []) if str(user_id).strip()]
 
 	if not resolved_request_id:
 		raise ValueError(
@@ -263,6 +340,7 @@ def _prepare_batch_census_before_portal(
 			"Set RequestId in process_selector.json or enable DB mode with available records."
 		)
 
+	destination_root: Path
 	if process_key == "add_batch":
 		output_path = upload_paths.get("batch_member_file")
 	elif process_key in {"delete_batch", "delete_bulk"}:
@@ -273,50 +351,43 @@ def _prepare_batch_census_before_portal(
 	if not output_path:
 		raise ValueError(f"Batch upload output path missing for process: {process_key}")
 
-	result = build_batch_census_file(
-		request_id=resolved_request_id,
-		request_type=request_type,
-		output_path=output_path,
-		portal_name="SUKOON",
-		logger=logger,
-	)
+	# BULK still runs through batch portal forms, so member census files are required.
+	if process_key == "add_batch":
+		result = build_addition_census_file(
+			request_id=resolved_request_id,
+			output_path=output_path,
+			portal_name="SUKOON",
+			include_user_ids=request_user_ids or None,
+			logger=logger,
+		)
+	else:
+		result = build_deletion_census_file(
+			request_id=resolved_request_id,
+			output_path=output_path,
+			portal_name="SUKOON",
+			include_user_ids=request_user_ids or None,
+			logger=logger,
+		)
 	logger.info(
 		"Batch census ready before portal start | "
 		f"Template={result.template_path} | Members={result.members_count} | "
 		f"Output={result.output_path}"
 	)
 
+	if is_bulk_action:
+		logger.info("Bulk pre-portal mode selected: census + supporting zip preparation enabled")
+
 	_open_census_in_excel_and_save(result.output_path, logger)
+	destination_root = Path(result.output_path).resolve().parent
 
-	if process_key == "add_batch":
-		supporting_zip_path = str(upload_paths.get("batch_supporting_document") or "").strip()
-		if supporting_zip_path:
-			zip_path = Path(supporting_zip_path)
-			zip_path.parent.mkdir(parents=True, exist_ok=True)
-
-			if not zip_path.exists() or zip_path.stat().st_size == 0:
-				source_file = Path(str(result.output_path))
-				if source_file.exists():
-					with ZipFile(zip_path, mode="w", compression=ZIP_DEFLATED) as archive:
-						archive.write(source_file, arcname=source_file.name)
-					logger.info(
-						"Generated batch supporting document ZIP | "
-						f"Source={source_file} | Output={zip_path}"
-					)
-				else:
-					logger.warning(
-						"Batch supporting ZIP generation skipped because census output was not found | "
-						f"ExpectedSource={source_file}"
-					)
-
-
-	if process_key in {"delete_batch", "delete_bulk"}:
-		_supporting_zip_for_bulk_delete(
-			request_id=resolved_request_id,
-			census_output_path=result.output_path,
-			upload_paths=upload_paths,
-			logger=logger,
-		)
+	_supporting_zip_for_bulk_request(
+		request_id=resolved_request_id,
+		request_type=request_type,
+		request_user_ids=request_user_ids,
+		destination_root=destination_root,
+		upload_paths=upload_paths,
+		logger=logger,
+	)
 
 
 def _prepare_manual_supporting_files(
@@ -418,41 +489,54 @@ def _prepare_manual_supporting_files(
 	)
 
 
-def _supporting_zip_for_bulk_delete(
+def _supporting_zip_for_bulk_request(
 	request_id: str,
-	census_output_path: Path,
+	request_type: str,
+	request_user_ids: list[str] | None,
+	destination_root: Path,
 	upload_paths: dict,
 	logger: logging.Logger,
 ) -> None:
 	max_zip_bytes = 4 * 1024 * 1024
-	supporting_zip_path = str(upload_paths.get("batch_delete_supporting_document_1") or "").strip()
+	request_type_upper = str(request_type or "").strip().upper()
+	if request_type_upper == "ADD":
+		primary_key = "batch_supporting_document"
+		secondary_key = ""
+	else:
+		primary_key = "batch_delete_supporting_document_1"
+		secondary_key = "batch_delete_supporting_document_2"
+
+	supporting_zip_path = str(upload_paths.get(primary_key) or "").strip()
 	if not supporting_zip_path:
 		return
 
-	supporting_zip_path_2 = str(upload_paths.get("batch_delete_supporting_document_2") or "").strip()
+	supporting_zip_path_2 = str(upload_paths.get(secondary_key) or "").strip() if secondary_key else ""
 
 	zip_path = Path(supporting_zip_path)
 	zip_path.parent.mkdir(parents=True, exist_ok=True)
 
 	zip_path_2 = Path(supporting_zip_path_2) if supporting_zip_path_2 else None
-	if zip_path.exists() and zip_path.stat().st_size > 0:
-		zip_size = zip_path.stat().st_size
-		zip_2_size = zip_path_2.stat().st_size if zip_path_2 and zip_path_2.exists() else 0
-		if zip_size <= max_zip_bytes and (not zip_path_2 or zip_2_size <= max_zip_bytes):
-			return
+	# Always rebuild zip outputs so stale files (for example old census zips) are never reused.
+	zip_path.unlink(missing_ok=True)
+	if zip_path_2 and zip_path_2.exists():
+		zip_path_2.unlink(missing_ok=True)
 
-		zip_path.unlink(missing_ok=True)
-		if zip_path_2 and zip_path_2.exists():
-			zip_path_2.unlink(missing_ok=True)
-
-	user_ids = load_request_user_ids(
+	eligible_user_ids = load_request_user_ids(
 		request_id=request_id,
 		portal_name="SUKOON",
-		request_type="DELETE",
+		request_type=request_type_upper,
 		logger=logger,
 	)
+
+	requested_user_ids = [str(user_id).strip() for user_id in (request_user_ids or []) if str(user_id).strip()]
+	if requested_user_ids:
+		eligible_set = set(eligible_user_ids)
+		user_ids = [user_id for user_id in requested_user_ids if user_id in eligible_set]
+	else:
+		user_ids = eligible_user_ids
+
 	if not user_ids:
-		raise RuntimeError("Bulk delete supporting docs missing: no users found for request")
+		raise RuntimeError("Bulk supporting docs missing: no users found for request")
 
 	with AzureSQLConnection(logger=logger) as db_connection:
 		connection = db_connection.connect()
@@ -463,18 +547,18 @@ def _supporting_zip_for_bulk_delete(
 		)
 
 	if not request_documents:
-		raise RuntimeError("Bulk delete supporting docs missing: no documents available for request")
+		raise RuntimeError("Bulk supporting docs missing: no documents available for request")
 
 	blob_service = AzureBlobDownloadService(logger=logger)
 	_, errors_by_user, all_downloaded = _download_documents_user_wise(
 		blob_service=blob_service,
 		request_documents=request_documents,
-		destination_root=Path(census_output_path).parent,
+		destination_root=destination_root,
 		logger=logger,
 	)
 
 	if not all_downloaded:
-		raise RuntimeError("Bulk delete supporting docs missing: download returned no files")
+		raise RuntimeError("Bulk supporting docs missing: download returned no files")
 
 	compressed_files = _compress_supporting_files(
 		files=all_downloaded,
@@ -482,11 +566,24 @@ def _supporting_zip_for_bulk_delete(
 		logger=logger,
 	)
 
-	destination_root = Path(census_output_path).parent
-	primary_files, secondary_files = _split_files_for_zip(
-		files=compressed_files,
-		max_bytes=max_zip_bytes,
-	)
+	# ADD batch/bulk uploads only expose a single supporting-document slot.
+	# In that mode, fit everything into one zip (trimmed if required) and avoid
+	# artificial secondary bucket generation.
+	if supporting_zip_path_2:
+		primary_files, secondary_files = _split_files_for_zip(
+			files=compressed_files,
+			max_bytes=max_zip_bytes,
+		)
+	else:
+		total_bytes = sum(item.stat().st_size for item in compressed_files)
+		if total_bytes > max_zip_bytes:
+			compressed_files = _trim_supporting_files(
+				files=compressed_files,
+				max_total_bytes=max_zip_bytes,
+				logger=logger,
+			)
+		primary_files = compressed_files
+		secondary_files = []
 	_build_supporting_zip_file(
 		zip_path=zip_path,
 		downloaded_files=primary_files,
@@ -494,18 +591,18 @@ def _supporting_zip_for_bulk_delete(
 		logger=logger,
 	)
 	if zip_path.stat().st_size > max_zip_bytes:
-		raise RuntimeError("Bulk delete supporting zip exceeds 4MB limit")
+		raise RuntimeError("Bulk supporting zip exceeds 4MB limit")
 
 	if errors_by_user:
 		combined_errors = []
 		for user_id, messages in errors_by_user.items():
 			combined_errors.extend([f"User {user_id}: {message}" for message in messages])
 		reason = " | ".join(combined_errors)[:1000]
-		raise RuntimeError(f"Bulk delete supporting docs download errors: {reason}")
+		raise RuntimeError(f"Bulk supporting docs download errors: {reason}")
 
 	if secondary_files:
 		if not supporting_zip_path_2:
-			raise RuntimeError("Bulk delete requires second supporting document slot for large files")
+			raise RuntimeError("Supporting docs still require a second upload slot after size optimization")
 
 		zip_path_2 = Path(supporting_zip_path_2)
 		_build_supporting_zip_file(
@@ -515,7 +612,7 @@ def _supporting_zip_for_bulk_delete(
 			logger=logger,
 		)
 		if zip_path_2.stat().st_size > max_zip_bytes:
-			raise RuntimeError("Bulk delete supporting zip 2 exceeds 4MB limit")
+			raise RuntimeError("Bulk supporting zip 2 exceeds 4MB limit")
 
 
 def _split_files_for_zip(files: list[Path], max_bytes: int) -> tuple[list[Path], list[Path]]:
@@ -784,8 +881,11 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
 	if request_upper == "DELETE" and action_upper in {"INDIVIDUAL", "MANUAL"}:
 		return "delete_manual"
 
-	if request_upper == "DELETE" and action_upper in {"BATCH", "BULK"}:
+	if request_upper == "DELETE" and action_upper == "BATCH":
 		return "delete_batch"
+
+	if request_upper == "DELETE" and action_upper == "BULK":
+		return "delete_bulk"
 
 	raise NotImplementedError(
 		f"Sukoon process not implemented for RequestType={request_upper}, ActionType={action_upper}"
@@ -797,10 +897,12 @@ async def run(
 	action_type: str,
 	request_id: str | None = None,
 	user_id: str | None = None,
+	request_user_ids: list[str] | None = None,
 	use_database: bool = True,
 ):
 	run_id = _make_run_id()
 	resolved_request_id = _normalize_request_id(request_id)
+	resolved_request_user_ids = [str(member_id).strip() for member_id in (request_user_ids or []) if str(member_id).strip()]
 	logger = _init_logger(run_id=run_id, request_id=resolved_request_id)
 	process_key = _resolve_process_key(request_type=request_type, action_type=action_type)
 	logger.info(
@@ -808,6 +910,8 @@ async def run(
 		f"UseDatabase={use_database} | RequestId={request_id or 'LATEST'} | "
 		f"UserId={str(user_id or '').strip() or '-'}"
 	)
+	if resolved_request_user_ids:
+		logger.info(f"Scoped request users received | Count={len(resolved_request_user_ids)}")
 
 	if process_key in {"add_individual", "delete_manual"} and not str(user_id or "").strip():
 		raise ValueError("UserId is required for Sukoon manual add/delete processes")
@@ -845,6 +949,14 @@ async def run(
 				failure_reason=str(exc),
 				logger=logger,
 			)
+		elif use_database and request_id and resolved_request_user_ids:
+			_update_portal_status_for_users(
+				request_id=request_id,
+				user_ids=resolved_request_user_ids,
+				status="FAILED",
+				failure_reason=str(exc),
+				logger=logger,
+			)
 		raise
 
 	resolved_request_id = _normalize_request_id(resolved_request_id)
@@ -854,15 +966,33 @@ async def run(
 		f"RequestId={resolved_request_id or 'UNKNOWN'}"
 	)
 
+	# Step 01: Resolve runtime URLs and upload paths.
 	base_url = str(config.get("paths", {}).get("base_url") or "https://medical.sukoon.com/")
 	upload_paths = get_upload_paths("SUKOON", str(request_type), str(action_type))
+	try:
+		# Step 02: Validate manual add data before opening the portal.
+		if process_key == "add_individual":
+			_validate_manual_add_values(manual_add_values, logger)
+	except Exception as exc:
+		if use_database and process_key in {"add_individual", "delete_manual"}:
+			_update_portal_status_for_user(
+				request_id=resolved_request_id,
+				user_id=user_id,
+				status="FAILED",
+				failure_reason=str(exc),
+				logger=logger,
+			)
+		raise
 
+	# Step 03: Prepare pre-portal artifacts (census/supporting files) from DB data.
 	if use_database:
 		try:
 			_prepare_batch_census_before_portal(
 				process_key=process_key,
+				action_type=action_type,
 				request_type=request_type,
 				resolved_request_id=resolved_request_id,
+				request_user_ids=resolved_request_user_ids,
 				upload_paths=upload_paths,
 				logger=logger,
 			)
@@ -882,8 +1012,17 @@ async def run(
 					failure_reason=str(exc),
 					logger=logger,
 				)
+			elif resolved_request_id and resolved_request_user_ids:
+				_update_portal_status_for_users(
+					request_id=resolved_request_id,
+					user_ids=resolved_request_user_ids,
+					status="FAILED",
+					failure_reason=str(exc),
+					logger=logger,
+				)
 			raise
 
+	# Step 04: Resolve browser launch configuration (always non-persistent context).
 	browser_config = config.get("browser", {})
 	headless = bool(browser_config.get("headless", False))
 	viewport_cfg = browser_config.get("viewport", {})
@@ -899,8 +1038,6 @@ async def run(
 		runtime_engine = "chromium"
 		default_channel = "chrome"
 	browser_channel = str(browser_config.get("channel") or default_channel).strip() or None
-	persistent_context = False
-	user_data_dir = ""
 
 	logger.info(f"Starting Sukoon flow | run_id={run_id}")
 	logger.info(f"Selected process | RequestType={request_type} | ActionType={action_type} | ProcessKey={process_key}")
@@ -908,57 +1045,31 @@ async def run(
 	logger.info(
 		"Browser launch mode | "
 		f"Engine={browser_engine} | "
-		f"Channel={browser_channel or '-'} | "
-		f"PersistentContext={persistent_context} | "
-		f"Profile={user_data_dir if persistent_context else '-'}"
+		f"Channel={browser_channel or '-'}"
 	)
 
 	page = None
 	browser = None
 	run_dir = _build_run_log_dir(run_id=run_id, request_id=resolved_request_id)
 
+	# Step 05: Launch browser and execute the selected Sukoon process.
 	async with async_playwright() as playwright:
 		context = None
 
-		if persistent_context:
-			if runtime_engine == "chromium":
-				context = await playwright.chromium.launch_persistent_context(
-					user_data_dir=user_data_dir,
-					headless=headless,
-					channel=browser_channel,
-					viewport={"width": width, "height": height},
-				)
-			elif runtime_engine == "firefox":
-				context = await playwright.firefox.launch_persistent_context(
-					user_data_dir=user_data_dir,
-					headless=headless,
-					viewport={"width": width, "height": height},
-				)
-			elif runtime_engine == "webkit":
-				context = await playwright.webkit.launch_persistent_context(
-					user_data_dir=user_data_dir,
-					headless=headless,
-					viewport={"width": width, "height": height},
-				)
-			else:
-				raise ValueError(f"Unsupported browser engine: {browser_engine}")
-
-			page = context.pages[0] if context.pages else await context.new_page()
+		if runtime_engine == "chromium":
+			browser = await playwright.chromium.launch(
+				headless=headless,
+				channel=browser_channel,
+			)
+		elif runtime_engine == "firefox":
+			browser = await playwright.firefox.launch(headless=headless)
+		elif runtime_engine == "webkit":
+			browser = await playwright.webkit.launch(headless=headless)
 		else:
-			if runtime_engine == "chromium":
-				browser = await playwright.chromium.launch(
-					headless=headless,
-					channel=browser_channel,
-				)
-			elif runtime_engine == "firefox":
-				browser = await playwright.firefox.launch(headless=headless)
-			elif runtime_engine == "webkit":
-				browser = await playwright.webkit.launch(headless=headless)
-			else:
-				raise ValueError(f"Unsupported browser engine: {browser_engine}")
+			raise ValueError(f"Unsupported browser engine: {browser_engine}")
 
-			context = await browser.new_context(viewport={"width": width, "height": height})
-			page = await context.new_page()
+		context = await browser.new_context(viewport={"width": width, "height": height})
+		page = await context.new_page()
 
 		try:
 			await page.goto(base_url, wait_until="domcontentloaded")
@@ -1040,6 +1151,15 @@ async def run(
 				await page.screenshot(path=str(success_shot), full_page=True)
 				logger.info(f"Saved batch add success screenshot: {success_shot}")
 
+				if use_database and resolved_request_id and resolved_request_user_ids:
+					_update_portal_status_for_users(
+						request_id=resolved_request_id,
+						user_ids=resolved_request_user_ids,
+						status="SUCCESS",
+						failure_reason=None,
+						logger=logger,
+					)
+
 			elif process_key == "delete_manual":
 				await manual_delete_member(
 					page=page,
@@ -1075,6 +1195,15 @@ async def run(
 				await page.screenshot(path=str(success_shot), full_page=True)
 				logger.info(f"Saved batch delete success screenshot: {success_shot}")
 
+				if use_database and resolved_request_id and resolved_request_user_ids:
+					_update_portal_status_for_users(
+						request_id=resolved_request_id,
+						user_ids=resolved_request_user_ids,
+						status="SUCCESS",
+						failure_reason=None,
+						logger=logger,
+					)
+
 			else:
 				raise RuntimeError(f"Unhandled Sukoon process key: {process_key}")
 
@@ -1084,6 +1213,14 @@ async def run(
 				_update_portal_status_for_user(
 					request_id=resolved_request_id,
 					user_id=user_id,
+					status="FAILED",
+					failure_reason=str(exc),
+					logger=logger,
+				)
+			elif use_database and resolved_request_id and resolved_request_user_ids:
+				_update_portal_status_for_users(
+					request_id=resolved_request_id,
+					user_ids=resolved_request_user_ids,
 					status="FAILED",
 					failure_reason=str(exc),
 					logger=logger,

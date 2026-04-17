@@ -26,12 +26,10 @@ data/outputs/error_screenshots/
 data/outputs/comparison/
 data/attachments/
 data/login.json
-data/browser_profiles/
 
 # Playwright / browser test artifacts
 playwright-report/
 ms-playwright/
-data/browser_profiles/
 
 # IDEs and editors
 .vscode/

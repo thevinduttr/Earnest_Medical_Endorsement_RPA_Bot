@@ -16,8 +16,9 @@ from src.services.blob_service.azure_blob_download_service import (
     AzureBlobDownloadService,
     extension_from_content_type,
 )
+from src.services.census_service.sukoon.addition_census import build_addition_census_file
+from src.services.census_service.sukoon.deletion_census import build_deletion_census_file
 from src.services.db_service.azure_db_connection import AzureSQLConnection
-from src.services.db_service.sukoon_batch_census_builder import build_batch_census_file
 from src.services.db_service.sukoon_member_data_loader import load_process_selector_by_request_id
 from src.utils.upload_file_paths import get_upload_paths
 
@@ -41,6 +42,12 @@ class RequestPreparationSummary:
     completed_requests: int
     failed_requests: int
     skipped_requests: int
+
+
+@dataclass(frozen=True)
+class ClaimedRequest:
+    request_id: str
+    user_ids: List[str]
 
 
 def _make_run_id() -> str:
@@ -178,14 +185,110 @@ def fetch_pending_requests(
         connection = db_connection.connect()
         grouped = _fetch_pending_requests(connection=connection, target_request_id=target_request_id)
 
-    if target_user_id:
+    target_user_id_text = str(target_user_id or "").strip()
+    if target_user_id_text:
         filtered: Dict[str, List[str]] = {}
         for request_id, user_ids in grouped.items():
-            if str(target_user_id) in user_ids:
-                filtered[request_id] = [str(target_user_id)]
-            return filtered
+            if target_user_id_text in user_ids:
+                filtered[request_id] = [target_user_id_text]
+        return filtered
 
     return grouped
+
+
+def _claim_next_pending_request(
+    connection,
+    target_request_id: str | None = None,
+    target_user_id: str | None = None,
+) -> ClaimedRequest | None:
+    target_request_id_text = _normalize_text(target_request_id)
+    target_user_id_text = _normalize_text(target_user_id)
+
+    next_request_conditions = [
+        "UPPER(ISNULL(EmailStatus, '')) = 'SUCCESS'",
+        "UPPER(ISNULL(OcrStatus, '')) = 'SUCCESS'",
+        "UPPER(ISNULL(ValidationStatus, '')) = 'SUCCESS'",
+        "UPPER(ISNULL(PortalStatus, '')) = 'PENDING'",
+    ]
+    query_params: List[Any] = []
+
+    if target_request_id_text:
+        next_request_conditions.append("RequestId = ?")
+        query_params.append(target_request_id_text)
+
+    if target_user_id_text:
+        next_request_conditions.append("UserId = ?")
+        query_params.append(target_user_id_text)
+
+    update_conditions = [
+        "UPPER(ISNULL(status_rows.EmailStatus, '')) = 'SUCCESS'",
+        "UPPER(ISNULL(status_rows.OcrStatus, '')) = 'SUCCESS'",
+        "UPPER(ISNULL(status_rows.ValidationStatus, '')) = 'SUCCESS'",
+        "UPPER(ISNULL(status_rows.PortalStatus, '')) = 'PENDING'",
+    ]
+    if target_user_id_text:
+        update_conditions.append("status_rows.UserId = ?")
+        query_params.append(target_user_id_text)
+
+    next_request_where_sql = "\n      AND ".join(next_request_conditions)
+    update_where_sql = "\n  AND ".join(update_conditions)
+
+    query = f"""
+WITH NextRequest AS (
+    SELECT TOP (1) RequestId
+    FROM {STATUS_TABLE} WITH (UPDLOCK, READPAST, ROWLOCK)
+    WHERE {next_request_where_sql}
+    GROUP BY RequestId
+    ORDER BY RequestId ASC
+)
+UPDATE status_rows
+SET PortalStatus = 'INPROCESS',
+    PortalFailureReason = NULL,
+    UpdatedAt = SYSUTCDATETIME()
+OUTPUT inserted.RequestId, inserted.UserId
+FROM {STATUS_TABLE} AS status_rows
+INNER JOIN NextRequest AS next_request
+    ON status_rows.RequestId = next_request.RequestId
+WHERE {update_where_sql}
+"""
+
+    cursor = connection.cursor()
+    try:
+        cursor.execute(query, query_params)
+        rows = cursor.fetchall()
+        connection.commit()
+    finally:
+        cursor.close()
+
+    if not rows:
+        return None
+
+    request_id = _normalize_text(rows[0][0])
+    user_ids: List[str] = []
+    for row in rows:
+        user_id = _normalize_text(row[1])
+        if user_id and user_id not in user_ids:
+            user_ids.append(user_id)
+
+    if not request_id or not user_ids:
+        return None
+
+    return ClaimedRequest(request_id=request_id, user_ids=user_ids)
+
+
+def claim_next_pending_request(
+    *,
+    target_request_id: str | None = None,
+    target_user_id: str | None = None,
+    logger=None,
+) -> ClaimedRequest | None:
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        return _claim_next_pending_request(
+            connection=connection,
+            target_request_id=target_request_id,
+            target_user_id=target_user_id,
+        )
 
 
 def update_portal_status_for_users(
@@ -437,14 +540,22 @@ def _build_batch_census_for_request(
     if not output_path:
         raise ValueError(f"Batch census output path missing for key: {output_key}")
 
-    result = build_batch_census_file(
-        request_id=request_id,
-        request_type=request_type,
-        output_path=output_path,
-        portal_name="SUKOON",
-        include_user_ids=request_user_ids,
-        logger=logger,
-    )
+    if request_type == "ADD":
+        result = build_addition_census_file(
+            request_id=request_id,
+            output_path=output_path,
+            portal_name="SUKOON",
+            include_user_ids=request_user_ids,
+            logger=logger,
+        )
+    else:
+        result = build_deletion_census_file(
+            request_id=request_id,
+            output_path=output_path,
+            portal_name="SUKOON",
+            include_user_ids=request_user_ids,
+            logger=logger,
+        )
     logger.info(
         "Batch census generated for request | "
         f"RequestId={result.request_id} | Members={result.members_count} | "
@@ -467,7 +578,12 @@ def _prepare_request_without_portal(
     if portal_name != "SUKOON":
         raise ValueError(f"Unsupported PortalName for pre-portal mode: {portal_name}")
 
-    normalized_action = "INDIVIDUAL" if action_type in {"MANUAL", "INDIVIDUAL"} else "BATCH"
+    if action_type in {"MANUAL", "INDIVIDUAL"}:
+        normalized_action = "INDIVIDUAL"
+    elif action_type == "BULK":
+        normalized_action = "BULK"
+    else:
+        normalized_action = "BATCH"
     upload_paths = get_upload_paths(portal_name, request_type, normalized_action)
     if not upload_paths:
         raise ValueError(
@@ -494,6 +610,10 @@ def _prepare_request_without_portal(
             upload_paths=upload_paths,
             logger=logger,
         )
+    elif normalized_action == "BULK":
+        logger.info(
+            "Bulk pre-portal mode selected: census generation skipped; preparing supporting zip only"
+        )
 
     request_documents = _fetch_request_documents_for_users(
         connection=connection,
@@ -512,7 +632,7 @@ def _prepare_request_without_portal(
         logger=logger,
     )
 
-    if normalized_action == "BATCH":
+    if normalized_action in {"BATCH", "BULK"}:
         if not all_downloaded:
             raise RuntimeError("No documents downloaded for bulk request")
 
