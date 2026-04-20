@@ -14,7 +14,7 @@ PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
     "add_individual": {
         "company_name": "PolicyNumber",
         "principal_radio": "MemberType",
-        "employee_number": "EmpNo",
+        "employee_number": "StaffId",
         "first_name": "FirstName",
         "middle_name": "MiddleName",
         "last_name": "LastName",

@@ -37,7 +37,7 @@ async def fill_profile_section(
             "key": "go_button",
             "label": "Click GO",
             "wait_for_load": True,
-            "post_wait_ms": 350,
+            "post_wait_ms": 3000,
             "required": False,
             "fail_on_validation_error": False,
         },

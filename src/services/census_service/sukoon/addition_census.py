@@ -24,7 +24,7 @@ def _value_from_addition_row(row: Dict[str, Any], header: str, row_number: int) 
     if header == "last name":
         return normalize_scalar(row.get("LastName"))
     if header == "employee number":
-        return normalize_scalar(row.get("StaffId") or row.get("HealthCardNumber"))
+        return normalize_scalar(row.get("StaffId"))
     if header == "date of birth":
         return to_excel_date(row.get("DateOfBirth"))
     if header == "gender":
@@ -54,7 +54,7 @@ def _value_from_addition_row(row: Dict[str, Any], header: str, row_number: int) 
     if header == "person commission":
         return normalize_scalar(row.get("Commission"))
     if header == "residential location":
-        return normalize_scalar(row.get("ResidenceRegion"))
+        return normalize_scalar(row.get("ResidenceEmirate"))
     if header == "work location":
         return normalize_scalar(row.get("WorkEmirate"))
     if header == "mobile number":

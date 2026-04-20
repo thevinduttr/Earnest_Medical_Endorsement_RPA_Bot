@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.portals.sukoon.sukoon_main import run as run_sukoon
+from src.portals.sukoon.sukoon_main import InvalidMembersMappedError, run as run_sukoon
 from src.services.db_service.sukoon_member_data_loader import load_process_selector_by_request_id
 from src.services.db_service.sukoon_preportal_processor import (
 	ClaimedRequest,
@@ -231,13 +231,14 @@ async def _run_queue_worker() -> None:
 				len(claimed.user_ids),
 				exc,
 			)
-			update_portal_status_for_users(
-				request_id=claimed.request_id,
-				user_ids=claimed.user_ids,
-				status="FAILED",
-				failure_reason=str(exc),
-				logger=logger,
-			)
+			if not isinstance(exc, InvalidMembersMappedError):
+				update_portal_status_for_users(
+					request_id=claimed.request_id,
+					user_ids=claimed.user_ids,
+					status="FAILED",
+					failure_reason=str(exc),
+					logger=logger,
+				)
 			await asyncio.sleep(settings.failure_sleep_seconds)
 			continue
 

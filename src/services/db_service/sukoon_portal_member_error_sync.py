@@ -163,7 +163,11 @@ def _merge_member_errors(error_messages: Iterable[str]) -> str:
         seen.add(text)
         deduplicated.append(text)
 
-    return " | ".join(deduplicated)[:1000]
+    merged = " | ".join(deduplicated)
+    if not merged:
+        return ""
+
+    return f"Invalid Member : {merged}"[:1000]
 
 
 def _update_failed_portal_status_for_users(

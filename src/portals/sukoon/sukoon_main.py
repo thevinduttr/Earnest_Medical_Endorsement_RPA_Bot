@@ -37,6 +37,10 @@ from src.utils.upload_file_paths import get_upload_paths
 STATUS_TABLE = "[dbo].[EndorsementRequestStatus]"
 
 
+class InvalidMembersMappedError(RuntimeError):
+	"""Validation failed after persisting member-level portal failure reasons."""
+
+
 def _make_run_id() -> str:
 	return datetime.now().strftime("run_%Y-%m-%d_%H-%M-%S")
 
@@ -1142,7 +1146,7 @@ async def run(
 						f"UpdatedUsers={sync_summary.updated_users} | "
 						f"UnmappedRows={sync_summary.unmapped_rows}"
 					)
-					raise RuntimeError(
+					raise InvalidMembersMappedError(
 						"Batch validate returned Invalid Members. "
 						"PortalStatus was updated to FAILED for mapped members."
 					)
@@ -1209,7 +1213,8 @@ async def run(
 
 		except Exception as exc:
 			logger.error(f"Sukoon run failed: {exc}")
-			if use_database and process_key in {"add_individual", "delete_manual"}:
+			skip_generic_failure_update = isinstance(exc, InvalidMembersMappedError)
+			if use_database and process_key in {"add_individual", "delete_manual"} and not skip_generic_failure_update:
 				_update_portal_status_for_user(
 					request_id=resolved_request_id,
 					user_id=user_id,
@@ -1217,7 +1222,7 @@ async def run(
 					failure_reason=str(exc),
 					logger=logger,
 				)
-			elif use_database and resolved_request_id and resolved_request_user_ids:
+			elif use_database and resolved_request_id and resolved_request_user_ids and not skip_generic_failure_update:
 				_update_portal_status_for_users(
 					request_id=resolved_request_id,
 					user_ids=resolved_request_user_ids,
