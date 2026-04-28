@@ -3,7 +3,7 @@ name: Deploy Medical Endorsement Bot
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 jobs:
