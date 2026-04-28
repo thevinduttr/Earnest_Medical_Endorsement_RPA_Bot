@@ -104,6 +104,37 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
     )
 
 
+def _read_bool_env(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _should_pause_after_login(browser_config: dict) -> bool:
+    env_value = _read_bool_env("PLAYWRIGHT_PAUSE_AFTER_LOGIN")
+    if env_value is not None:
+        return env_value
+    return bool(browser_config.get("pause_after_login", False))
+
+
+async def _pause_after_login_if_enabled(page, enabled: bool, logger: logging.Logger) -> None:
+    if not enabled:
+        return
+
+    logger.info(
+        "Playwright pause_after_login is enabled. "
+        "Complete OTP/manual login steps, then resume Playwright to continue."
+    )
+    await page.pause()
+
+
 async def run(
     request_type: str,
     action_type: str,
@@ -161,6 +192,7 @@ async def run(
 
     browser_config = config.get("browser", {}) if isinstance(config, dict) else {}
     headless = bool(browser_config.get("headless", False))
+    pause_after_login = _should_pause_after_login(browser_config)
     persistent_context = bool(browser_config.get("persistent_context", True))
     user_data_dir = Path(
         str(browser_config.get("nas_user_data_dir") or "data/browser_profiles/nas")
@@ -240,6 +272,8 @@ async def run(
             success_shot = run_dir / "nas_login_success.png"
             await page.screenshot(path=str(success_shot), full_page=True)
             logger.info(f"Saved NAS login success screenshot: {success_shot}")
+
+            await _pause_after_login_if_enabled(page, pause_after_login, logger)
 
             await open_new_member_page(
                 page=page,
