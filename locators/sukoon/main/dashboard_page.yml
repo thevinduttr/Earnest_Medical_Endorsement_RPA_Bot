@@ -1,0 +1,20 @@
+
+dashboard:
+
+  # Main Policy Servicing menu
+  policy_servicing: "//li[@id='menu-policy']"
+  
+  # Member submenu
+  member_menu: "//a[normalize-space()='Member']"
+  
+  # Add/Delete operations
+  add_operation: "//a[normalize-space()='Add']"
+  delete_operation: "//a[normalize-space()='Delete']"
+  
+  # Manual and Batch actions for add
+  manual_add: "//a[@href='/PolicyServicing/member/manualaddition']"
+  batch_add: "//a[@href='/PolicyServicing/Member/BatchAddition']"
+  
+  # Manual and Batch actions for delete
+  manual_delete: "//a[@href='/PolicyServicing/Member/ManualDelete']"
+  batch_delete: "//a[@href='/PolicyServicing/Member/BatchDeletion']"

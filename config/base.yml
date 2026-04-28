@@ -1,0 +1,26 @@
+bot_details:
+  name: "Sukoon Medical Bot"
+  version: "1.0.0"
+  id: "1"
+
+paths:
+  base_url: "https://medical.sukoon.com/"
+  nas_login_url: "https://nsecure.nnhs.ae/Accounts/login?returnUrl=%2Fconnect%2Fauthorize%3Fclient_id%3Drhr6or1ivz4nx1g42h7v%26redirect_uri%3Dhttps%253A%252F%252Fntouch.nnhs.ae%252FBrokerConnect%252F%26response_type%3Dcode%26scope%3Dopenid%26code_challenge%3DQ_7HrLhkJilt34I70kaTZoXTwpeMPKiNhc--sfGEik4%26code_challenge_method%3DS256%26state%3DOpenIdConnect.AuthenticationProperties%253DKPku_OcZpHHQSU-K98d0HnOXsN3vhRly7qdc-QfuJ-hX1lwFYXaaAuG87EeT98Wt_198IU-jx4VKIi5RyvNb87YUHy29gf8BghZ7STvNCUHmnJJ3ss_FKB42DUuZUs30GyUNM_nQ7LXj7wpKwbarnov7uTklXLF78cTgjKJLhVb0dn4EajA6BWFlHo_yHBhVTbMkG1209d9jD0e2evqFSDncGJe_ZlZ4VpdvmDYBJJDjUS4mO86t3p3JwJS3qWz_xLcJ_GpJ4m-6TcJ8V8fAbmyu8pJfAOXhiaZIamH9muI%26response_mode%3Dform_post%26nonce%3D638987036291113498.Mzk1ZDlmOTgtZDkyYS00ZmI2LTgzYTUtOTcwOGU0ZWNlZWRjZDViMzI5ODQtNmRlZC00MDExLThjMTAtMmRkOWEwYzY4ODE5%26x-client-SKU%3DID_NET461%26x-client-ver%3D5.3.0.0"
+
+browser:
+  headless: false
+  engine: "msedge"
+  channel: "msedge"
+  persistent_context: true
+  user_data_dir: "data/browser_profiles/sukoon"
+  nas_user_data_dir: "data/browser_profiles/nas"
+  viewport:
+    width: 1920
+    height: 945
+
+worker:
+  poll_interval_seconds: 10
+  failure_sleep_seconds: 2
+  loop_sleep_seconds: 0.2
+  clear_attachments_each_cycle: true
+

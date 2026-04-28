@@ -1,0 +1,4 @@
+login:
+  username: "#Username"
+  password: "#Password"
+  login_button: "button:has-text(\"Login\")"

@@ -1,0 +1,61 @@
+manual_add_member:
+  # Left navigation
+  policy_servicing_menu: "#menu-policy > a"
+  member_menu: "#menu-policy > ul > li:nth-of-type(2) > a"
+  add_menu: "#menu-policy > ul > li:nth-of-type(2) > ul > li:nth-of-type(2) > a"
+  manual_menu: "#menu-policy > ul > li:nth-of-type(2) > ul > li:nth-of-type(2) > ul > li:nth-of-type(1) > a"
+
+  # Manual page
+  manual_page_marker: "span.filter-option"
+  company_dropdown_toggle: "span.filter-option"
+  company_option_items: "div.dropdown-menu.open li a span.text"
+
+  # Form fields
+  principal_radio: "#form-membertype-selection > label:nth-of-type(2) > input"
+  employee_number: "#form-employee-number"
+  go_button: "#form-button-go"
+
+  first_name: "#form-first-name"
+  middle_name: "#form-middle-name"
+  last_name: "#form-last-name"
+  gender: "#form-gender"
+  marital_status: "#form-marital-status"
+  relationship: "#form-Relationship"
+  date_of_birth: "#form-Date-of-birth"
+  salary_band: "#form-salary-band"
+  nationality: "#form-nationality"
+  passport_number: "#form-input-passport"
+  eid_number: "#form-input-eidNumber"
+  unique_id_visa: "#form-input-uniqueid"
+  visa_file_number: "#form-input-visaFileNumber"
+  category: "#form-select-category"
+  commission_based: "#form-select-personcommission"
+  department: "#form-input-department"
+  start_date: "#form-start-date"
+  emirate_residence: "#form-emirate-residence"
+  birth_certificate: "#form-birth-certificate"
+
+  # Step navigation
+  step1_next_button: "#step-1 button.nextBtn"
+
+  # Communication details section (step 2)
+  communication_residential_location: "#form-residential-location"
+  communication_work_location: "#form-Work-Location"
+  communication_email: "#form-input-email"
+  communication_mobile_number: "#form-input-mobilenumber"
+  step2_next_button: "#step-2 button.nextBtn"
+
+  # Sponsor details section (step 3)
+  sponsor_type: "#step-3 select"
+  sponsor_uid: "#form-input-sponsoruid"
+  sponsor_contact_number: "#form-input-sponsormobilenumber"
+  sponsor_email: "#form-sponsor-email"
+  step3_next_button: "#step-3 button.nextBtn"
+
+  # Upload section (step 4)
+  supporting_document_input: "#supporting-document"
+  upload_comments: "#divComments textarea"
+  step4_reset_button: "#step-4 button:nth-of-type(2)"
+
+  # Backward compatibility alias
+  next_button: "#step-1 button.nextBtn"

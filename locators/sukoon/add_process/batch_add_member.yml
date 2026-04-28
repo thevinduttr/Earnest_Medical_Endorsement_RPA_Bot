@@ -1,0 +1,19 @@
+batch_add_member:
+  # Left navigation
+  policy_servicing_menu: "#menu-policy > a"
+  member_menu: "#menu-policy > ul > li:nth-of-type(2) > a"
+  add_menu: "#menu-policy > ul > li:nth-of-type(2) > ul > li:nth-of-type(2) > a"
+  batch_menu: "#menu-policy > ul > li:nth-of-type(2) > ul > li:nth-of-type(2) > ul > li:nth-of-type(2) > a"
+
+  # Batch page
+  batch_page_marker: "div.col-md-5 button"
+  policy_dropdown_toggle: "div.col-md-5 button"
+  policy_option_items: "div.col-md-5 div.dropdown-menu.open li a span.text"
+  batch_view_button: "#btn-view-member"
+
+  # Upload and submission
+  batch_member_file_input: "#fileUpload"
+  batch_supporting_document_input: "#document-type"
+  batch_comments: "#divComments textarea"
+  batch_validate_button: "#container div:nth-of-type(4) div.col-md-2 > button"
+  batch_submit_button: "#btnSubmit"

@@ -1,0 +1,13 @@
+search_client:
+  tab : (//li[@role='tab' and .//a[normalize-space()='Client Search']])[1]
+
+  advanced_search_button: (//button[normalize-space()='Advance Search'])[1]
+
+  search_client_name: "//label[contains(text(),'Client Name')]/following::input[1]"
+  search_emirates_id: "(//label[contains(text(),'Emirate Id')]/following::input[1])[2]"
+  search_mobile_number: "//input[@name='ClientSearch.MobileNo']"
+  search_email_id: "//input[@name='ClientSearch.EmailId']"
+  
+  clear_button: "(//button[normalize-space()='Clear'])[1]"
+  search_button: "(//button[normalize-space()='Search'])[1]"
+  close_tab_button: (//span[normalize-space()='Remove Tab' and contains(@class,'ui-icon-close')])[1]

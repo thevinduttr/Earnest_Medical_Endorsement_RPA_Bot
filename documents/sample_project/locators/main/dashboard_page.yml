@@ -1,0 +1,18 @@
+
+dashboard:
+  xpath: "//a[normalize-space()='Dashboard']"
+
+  toggle_sidebar: "//a[contains(@class,'glyphicons') and contains(@class,'show_lines')]"
+
+  sidebar_client_main: "//a[contains(@class,'accordion-toggle') and .//span[normalize-space()='Client']]"
+  sidebar_create_client: "//a[contains(@class,'add_tab') and (normalize-space()='Create Client' or .//text()[normalize-space()='Create Client'])]"
+  sidebar_search_client: "//a[contains(@class,'add_tab') and @id='A3' and normalize-space()='Search Client']"
+
+  sidebar_lead_main: "//a[contains(@class,'accordion-toggle') and .//span[normalize-space()='Lead']]"
+  sidebar_create_lead: "//a[contains(@class,'add_tab') and (normalize-space()='Create Lead' or .//text()[normalize-space()='Create Lead'])]"
+  sidebar_search_lead: "//a[contains(@class,'add_tab') and (normalize-space()='Search Lead' or .//text()[normalize-space()='Search Lead'])]"
+
+  sidebar_prospect_main: "//a[contains(@class,'accordion-toggle') and .//span[normalize-space()='Prospect']]"
+  sidebar_create_prospect: "//a[normalize-space()='Create Prospect' and contains(@rel,'Business_Generation.html')]"
+  sidebar_search_prospect: "//a[contains(@class,'add_tab') and (normalize-space()='Search Prospect' or .//text()[normalize-space()='Search Prospect'])]"
+

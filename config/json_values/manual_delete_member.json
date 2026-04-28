@@ -1,0 +1,10 @@
+{
+  "dashboard_url": "https://medical.sukoon.com/PolicyServicing/Dashboard/Overview",
+  "manual_delete_page_url": "https://medical.sukoon.com/PolicyServicing/Member/ManualDelete",
+  "company_name": "81099 (KIMS MEDICAL CENTRE)",
+  "delete_type": "1",
+  "employee_number": "12345",
+  "deletion_effective_date": "07/04/2026",
+  "delete_comments": "12345Commet !@#",
+  "click_clear_after_fill": true
+}

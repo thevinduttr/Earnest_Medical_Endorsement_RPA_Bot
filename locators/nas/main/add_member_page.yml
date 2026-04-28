@@ -1,0 +1,3 @@
+add_member_page:
+  add_member_button: "#cphNasHrMasterBody_btnAddMember"
+  accordion_header: "a.acchdr"

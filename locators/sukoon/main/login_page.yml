@@ -1,0 +1,14 @@
+login:
+  # Step 1: Click Sign In button on homepage
+  sign_in_button: //button[@id='btn-login']
+  
+  # Step 2: Select Business tab (switch from Individual to Business)
+  business_tab: //button[normalize-space()='Business']
+  business_tab_active: label.currentTab
+  
+  # Step 3: Fill login credentials
+  email_address: //input[@id='signInName']
+  password: //input[@id='password']
+  
+  # Step 4: Click Login button
+  login_button: //button[@id='next']

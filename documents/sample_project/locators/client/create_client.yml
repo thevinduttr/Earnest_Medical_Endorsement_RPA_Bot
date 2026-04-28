@@ -1,0 +1,70 @@
+create_client:
+  tab : (//li[@role='tab' and .//a[normalize-space()='New Client']])[1]
+
+  client_type: "//label[contains(text(),'Client Type')]/following::select[@name='Client.ClientType'][1]"
+  title : "(//label[normalize-space(string())='Title']/following::select[1])[1]"
+  first_name : "(//label[normalize-space(string())='First Name *']/following::input[1])[1]"
+  last_name : "(//label[normalize-space(string())='Last Name *']/following::input[1])[1]"
+  gender : "(//label[normalize-space(string())='Gender']/following::select[1])[1]"
+  dob : "(//label[normalize-space(string())='Date of Birth']/following::input[1])[1]"
+  age : "(//label[normalize-space(string())='Age']/following::input[1])[1]"
+  emirates_id : "(//label[normalize-space(string())='Emirate Id']/following::input[1])[1]"
+  emirates_id_expiry : "(//label[normalize-space(string())='Emirate Id Expiry Date']/following::input[1])[1]"
+  other_id : "(//label[normalize-space(string())='Other Id']/following::input[1])[1]"
+  credit_limit : "(//label[normalize-space(string())='Credit Limit']/following::input[1])[1]"
+  credit_days : "(//label[normalize-space(string())='Credit Days']/following::input[1])[1]"
+  payment_options : "(//label[normalize-space(string())='Payment Option']/following::select[1])[1]"
+
+  marital_status : "(//label[normalize-space(string())='Marital Status']/following::select[1])[1]"
+  date_of_anniversary : "(//label[normalize-space(string())='Date of Anniversary']/following::input[1])[1]" 
+  occupation : "(//label[normalize-space(string())='Occupation']/following::select[1])[1]"
+  annual_income : "(//label[normalize-space(string())='Annual Income']/following::select[1])[1]"
+  designation : "(//label[normalize-space(string())='Designation']/following::input[1])[1]"
+  passport_no : "(//label[normalize-space(string())='Passport No.']/following::input[1])[1]"
+  vat_reg_no : "(//label[normalize-space(string())='VAT Registration Number']/following::input[1])[1]"
+  suspended : "(//label[normalize-space(string())='Suspended']/following::select[1])[1]"
+  suspended_comments : "(//label[normalize-space(string())='Suspended Comment']/following::input[1])[1]"
+  tcf_no : "(//label[normalize-space(string())='TCF No']/following::input[1])[1]"
+  tcf_emirate : "(//label[normalize-space(string())='TCF Emirate']/following::select[1])[1]"
+
+  aml_verified : "//*[@id='IsAMLVerified__ClientModelO4OQ']"
+  aml_status : "(//label[normalize-space(string())='AML Status']/following::select[1])[1]"
+  aml_review_date : "(//label[normalize-space(string())='AML Review Date']/following::input[1])[1]"
+  aml_remarks : "(//label[normalize-space(string())='AML Remarks']/following::textarea[1])[1]"
+
+  dl_issue_date : "(//label[normalize-space(string())='License Issue Date']/following::input[1])[1]"
+  dl_license_no : "(//label[normalize-space(string())='License Number']/following::input[1])[1]"
+  dl_exp_date : "(//label[normalize-space(string())='License Expiry Date']/following::input[1])[1]"
+  dl_issue_place : "(//label[normalize-space(string())='License Issue Place']/following::select[1])[1]"
+
+  contact_address : "//textarea[@name='Client.Address']"
+  contact_pobox : "//input[@name='Client.Pin']"
+  contact_nationality : "(//label[normalize-space(string())='Nationality *' or normalize-space(string())='Nationality']/following::select[1])[1]"
+  contact_emirate : "(//label[normalize-space(string())='Emirate *' or normalize-space(string())='Emirate']/following::select[1])[1]"
+  contact_landline_no : "//input[@name='Client.LandlineNo']"
+  contact_fax_no : "//input[@name='Client.FaxNo']"
+  contact_other_contact_details : "//input[@name='Client.OtherContactDetails']"
+  contact_mobile_number : "//input[@name='tempMobileNoWithDialCode']"
+  contact_email : "//input[@name='Client.EmailId']"
+
+  other_contact_person : "(//label[normalize-space(string())='Contact Person Name']/following::input[1])[1]"
+  other_contact_person_designation : "(//label[normalize-space(string())='Contact Person Designation']/following::input[1])[1]"
+  other_sales_user : "(//label[normalize-space(string())='Sales User']/following::select[1])[1]"
+  other_is_group_client : "(//label[normalize-space(string())='Is Group Client']/following::select[1])[1]"
+  other_group_client : "(//label[normalize-space(string())='Group Client']/following::select[1])[1]"
+  other_pos : "(//label[normalize-space(string())='POS']/following::select[1])[1]"
+  other_client_code : "(//label[normalize-space(string())='Client Code']/following::input[1])[1]"
+  other_source : "(//label[normalize-space(string())='Source']/following::select[1])[1]"
+
+  save_button: "(//button[contains(@class,'btn-success') and normalize-space()='Save'])[1]"
+
+  upload_document_field: "div[id^='DragnDrop__'].dropzone"
+
+  close_tab_button: "(//span[normalize-space()='Remove Tab' and contains(@class,'ui-icon-close')])[1]"
+
+# Error handling selectors
+error_handling:
+  error_message: "//div[contains(@class,'alert-danger') or contains(@class,'error')]//text()"
+  validation_errors: "//span[contains(@class,'field-validation-error')]//text()"
+  success_message: "//div[contains(@class,'alert-success')]//text()"
+

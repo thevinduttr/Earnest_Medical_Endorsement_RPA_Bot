@@ -1,0 +1,3 @@
+new_button_page:
+  new_button: "#cphNasHrMasterBody_btnAddNewMember"
+  add_member_button: "#cphNasHrMasterBody_btnAddMember"

@@ -1,0 +1,31 @@
+create_prospect:
+  tab: "(//li[@role='tab' and .//a[normalize-space()='New Prospect']])[1]"
+
+  client_uae_license_held_for : "//select[@name='NewBusinessGen.UAELicenseHeldFor']"
+
+  general_prospect_ref_no: "(//label[normalize-space(string())='Prospect RefNo']/following::input[1])[1]"
+  general_business_type: "(//label[normalize-space(string())='Business Type *']/following::select[1])[1]"
+  general_class: "(//label[normalize-space(string())='Class *']/following::select[1])[1]"
+  general_policy_type: "(//label[normalize-space(string())='Policy Type *']/following::select[1])[1]"
+  general_source: "(//label[normalize-space(string())='Source']/following::select[1])[1]"
+  general_pos: "(//label[normalize-space(string())='POS *']/following::select[1])[1]"
+  general_generation_date: "(//label[normalize-space(string())='Generation Date *']/following::input[1])[1]"
+  general_due_date: "(//label[normalize-space(string())='Due Date']/following::input[1])[1]"
+  general_years_insured: "(//label[normalize-space(string())='No of Years Customer has been insured']/following::input[1])[1]"
+
+  general_classification: "(//label[normalize-space(string())='Classification']/following::select[1])[1]"
+  general_competitor: "(//label[normalize-space(string())='Competitor']/following::select[1])[1]"
+  general_client_ref_no: "(//label[normalize-space(string())='Client Ref No']/following::input[1])[1]"
+  general_location: "(//label[normalize-space(string())='Location']/following::input[1])[1]"
+  general_cover_note_number: "(//label[normalize-space(string())='Cover Note Number']/following::input[1])[1]"
+
+  general_sales_user: "(//label[normalize-space(string())='Sales User']/following::select[1])[1]"
+  general_assign_to_group: "(//label[normalize-space(string())='Assign to Group']/following::select[1])[1]"
+  general_assign_to_user: "(//label[normalize-space(string())='Assign to User']/following::select[1])[1]"
+  general_remarks: "(//label[normalize-space(string())='Remarks']/following::textarea[1])[1]"
+
+  upload_document_field: "div[id^='DragnDrop__'].dropzone:first-of-type"
+
+  save_button: "(//button[normalize-space()='Save'])[1]"
+
+  close_tab_button: (//span[normalize-space()='Remove Tab' and contains(@class,'ui-icon-close')])[1]

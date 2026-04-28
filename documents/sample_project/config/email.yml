@@ -1,0 +1,30 @@
+# Choose either: provider OR explicit smtp_host/smtp_port
+# Supported providers: gmail, outlook
+provider: "gmail"     # or "outlook"
+
+# If you prefer explicit SMTP settings, uncomment below:
+# smtp_host: "smtp.gmail.com"
+# smtp_port: 587
+
+use_tls: true
+
+auth:
+  username: "${SMTP_USERNAME}"  # Use environment variable
+  password: "${SMTP_PASSWORD}"  # Use environment variable for security
+
+sender:
+  email: "${SENDER_EMAIL}"  # Use environment variable
+  name: "RPA Bot"
+
+# Default recipient groups (you can override/add more in main.py)
+recipients:
+  to:
+    - "${RECIPIENT_EMAIL}"  # Use environment variable
+  cc: []
+  bcc: []
+
+# Error handling configuration
+error_handling:
+  max_retries: 3
+  retry_delay: 5  # seconds
+  timeout: 30     # seconds

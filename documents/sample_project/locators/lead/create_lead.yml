@@ -1,0 +1,41 @@
+# Lead Management Locators
+create_lead:
+  tab : (//li[@role='tab' and .//a[normalize-space()='New Lead']])[1]
+
+  client_type: "(//label[normalize-space(string())='Client Type *']/following::select[1])[1]"
+  first_name: "(//label[normalize-space(string())='First Name *']/following::input[1])[1]"
+  last_name: "(//label[normalize-space(string())='Last Name *']/following::input[1])[1]"
+  mobile_no: "(//label[normalize-space(string())='Mobile No. *']/ancestor::div[contains(@class,'form-group')][1]//input[not(@type='hidden')][1])[1]"
+  email_id: "(//label[normalize-space(string())='Email Id']/following::input[1])[1]"
+  emirate_id: "(//label[normalize-space(string())='Emirate Id']/following::input[1])[1]"
+  contact_remarks: "(//label[normalize-space(string())='Contact Remarks']/following::input[1])[1]"
+    
+  client_ref_no: "(//label[normalize-space(string())='Client Ref No']/following::input[1])[1]"
+  group_client: "(//label[normalize-space(string())='Group Client']/following::select[1])[1]"
+  date_of_birth: "(//label[normalize-space(string())='Date of Birth']/following::input[1])[1]"
+  age: "(//label[normalize-space(string())='Age']/following::input[1])[1]"
+  emirate: "(//label[normalize-space(string())='Emirate']/following::select[1])[1]"
+  nationality: "(//label[normalize-space(string())='Nationality']/following::select[1])[1]"
+  insured_different: "(//label[normalize-space(string())='Insured Different from Client']/following::input[@type='checkbox'][1])[1]"
+
+  requirement_lead_ref_no: "(//label[normalize-space(string())='Lead RefNo']/following::input[1])[1]"
+  requirement_business_type: "(//label[normalize-space(string())='Business Type']/following::select[1])[1]"
+  requirement_class: "(//label[normalize-space(string())='Class']/following::select[1])[1]"
+  requirement_policy_type: "(//label[normalize-space(string())='Policy Type']/following::select[1])[1]"
+  requirement_insurer: "(//label[normalize-space(string())='Insurer']/following::select[1])[1]"
+  requirement_lead_generation_date: "(//label[normalize-space(string())='Lead Generation Date *']/following::input[1])[1]"
+  requirement_due_date: "(//label[normalize-space(string())='Due Date']/following::input[1])[1]"
+  requirement_classification: "(//label[normalize-space(string())='Classification']/following::select[1])[1]"
+
+  requirement_source: "(//label[normalize-space(string())='Source']/following::select[1])[1]"
+  requirement_pos: "(//label[normalize-space(string())='POS *']/following::select[1])[1]"
+  requirement_sales_user: "(//label[normalize-space(string())='Sales User']/following::select[1])[1]"
+  requirement_assign_to_group: "(//label[normalize-space(string())='Assign to Group']/following::select[1])[1]"
+  requirement_assign_to_user: "(//label[normalize-space(string())='Assign to User']/following::select[1])[1]"
+  requirement_remarks: "(//label[normalize-space(string())='Remarks']/following::textarea[1])[1]"
+
+  save_button: "(//button[contains(@class,'btn-success') and normalize-space()='Save'])[1]"
+  
+  upload_document_field: "div[id^='DragnDrop__'].dropzone"
+
+  close_tab_button: (//span[normalize-space()='Remove Tab' and contains(@class,'ui-icon-close')])[1]
