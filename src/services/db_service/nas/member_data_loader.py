@@ -13,6 +13,7 @@ TABLE_NAME = "[dbo].[EndorsementRequestsMemberData]"
 PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
     "add_individual": {
         "company_name": "PolicyNumber",
+        "contract_name": "ContractName",
         "principal_radio": "MemberType",
         "employee_number": "StaffId",
         "first_name": "FirstName",
@@ -45,17 +46,21 @@ PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
     },
     "add_batch": {
         "company_name": "PolicyNumber",
+        "contract_name": "ContractName",
     },
     "delete_manual": {
         "company_name": "PolicyNumber",
+        "contract_name": "ContractName",
         "employee_number": "HealthCardNumber",
         "deletion_effective_date": "DeletionEffectiveDate",
     },
     "delete_batch": {
         "company_name": "PolicyNumber",
+        "contract_name": "ContractName",
     },
     "delete_bulk": {
         "company_name": "PolicyNumber",
+        "contract_name": "ContractName",
     },
 }
 
@@ -85,6 +90,8 @@ def _resolve_action_variants(action_type: str) -> Sequence[str]:
         return ("BATCH",)
     if action == "BULK":
         return ("BULK",)
+    if action in {"FAMILY", "FAMILY_MEMBER"}:
+        return ("FAMILY", "FAMILY_MEMBER")
     return (action,)
 
 
@@ -333,6 +340,73 @@ ORDER BY CreatedAt DESC, Id DESC
         logger.info(
             "Selector loaded from DB | "
             f"RequestId={request_id_text} | PortalName={selector['PortalName']} | "
+            f"RequestType={selector['RequestType']} | ActionType={selector['ActionType']}"
+        )
+
+    return selector
+
+
+def load_process_selector(
+    *,
+    portal_name: str,
+    request_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    logger=None,
+) -> Dict[str, str]:
+    portal_name_text = _normalize_upper(portal_name)
+    if not portal_name_text:
+        raise ValueError("portal_name is required to load process selector from DB")
+
+    request_id_text = str(request_id or "").strip()
+    user_id_text = str(user_id or "").strip()
+
+    where_parts = ["UPPER(PortalName) = ?"]
+    query_params: list[Any] = [portal_name_text]
+    if request_id_text:
+        where_parts.append("RequestId = ?")
+        query_params.append(request_id_text)
+    if user_id_text:
+        where_parts.append("UserId = ?")
+        query_params.append(user_id_text)
+
+    where_sql = "\n  AND ".join(where_parts)
+    query = f"""
+SELECT TOP (1) PortalName, RequestType, ActionType, RequestId
+FROM {TABLE_NAME}
+WHERE {where_sql}
+ORDER BY CreatedAt DESC, Id DESC
+"""
+
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(query, query_params)
+            row = cursor.fetchone()
+            if row is None:
+                request_filter = f", RequestId={request_id_text}" if request_id_text else ""
+                user_filter = f", UserId={user_id_text}" if user_id_text else ""
+                raise ValueError(
+                    "No process selector row found in EndorsementRequestsMemberData for "
+                    f"PortalName={portal_name_text}{request_filter}{user_filter}"
+                )
+
+            columns = [column[0] for column in cursor.description]
+            row_data = {columns[index]: row[index] for index in range(len(columns))}
+        finally:
+            cursor.close()
+
+    selector = {
+        "PortalName": _normalize_upper(row_data.get("PortalName")),
+        "RequestType": _normalize_upper(row_data.get("RequestType")),
+        "ActionType": _normalize_action_for_selector(row_data.get("ActionType")),
+        "RequestId": _normalize_text_value(row_data.get("RequestId")) or request_id_text,
+    }
+
+    if logger:
+        logger.info(
+            "Selector loaded from DB | "
+            f"RequestId={selector['RequestId'] or '-'} | PortalName={selector['PortalName']} | "
             f"RequestType={selector['RequestType']} | ActionType={selector['ActionType']}"
         )
 

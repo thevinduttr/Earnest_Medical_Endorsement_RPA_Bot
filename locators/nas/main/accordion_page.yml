@@ -1,2 +1,8 @@
 accordion_page:
   accordion_header: "a.acchdr"
+  policy_card: "div.card"
+  policy_contract_link: "h5.card-title a"
+  select_policy_button: "button.emp-slct:has-text(\"Select Policy\")"
+  sub_policy_card: "div.card"
+  sub_policy_contract_link: "h5.card-title a"
+  sub_policy_add_member_button: "button.icon_btn[title=\"Add member\"], button:has-text(\"Add Member\")"

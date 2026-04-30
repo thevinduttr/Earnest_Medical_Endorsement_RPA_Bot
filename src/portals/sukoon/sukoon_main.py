@@ -21,15 +21,15 @@ from src.services.census_service.sukoon.deletion_census import (
 )
 from src.services.blob_service.azure_blob_download_service import AzureBlobDownloadService
 from src.services.db_service.azure_db_connection import AzureSQLConnection
-from src.services.db_service.preportal_processor import (
+from src.services.db_service.sukoon.preportal_processor import (
 	_download_documents_user_wise,
 	_fetch_request_documents_for_users,
 )
-from src.services.db_service.portal_member_error_sync import (
+from src.services.db_service.sukoon.portal_member_error_sync import (
 	MemberErrorSyncSummary,
 	sync_batch_validation_errors_to_portal_status,
 )
-from src.services.db_service.member_data_loader import load_member_process_values
+from src.services.db_service.sukoon.member_data_loader import load_member_process_values
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
 from src.utils.upload_file_paths import get_upload_paths
 

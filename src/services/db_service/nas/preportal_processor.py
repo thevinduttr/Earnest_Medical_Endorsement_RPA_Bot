@@ -19,7 +19,7 @@ from src.services.blob_service.azure_blob_download_service import (
 from src.services.census_service.sukoon.addition_census import build_addition_census_file
 from src.services.census_service.sukoon.deletion_census import build_deletion_census_file
 from src.services.db_service.azure_db_connection import AzureSQLConnection
-from src.services.db_service.member_data_loader import load_process_selector_by_request_id
+from src.services.db_service.nas.member_data_loader import load_process_selector_by_request_id
 from src.utils.upload_file_paths import get_upload_paths
 
 

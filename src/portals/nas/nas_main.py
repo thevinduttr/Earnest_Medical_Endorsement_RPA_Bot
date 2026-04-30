@@ -7,12 +7,15 @@ import os
 
 from playwright.async_api import async_playwright
 
-from src.portals.nas.main_process.accordion_page import select_company_accordion
-from src.portals.nas.main_process.add_member_page import open_add_member_page
+from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
+from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
 from src.portals.nas.main_process.login import login
 from src.portals.nas.main_process.new_button_page import open_new_member_page
-from src.services.db_service.member_data_loader import load_member_process_values
-from src.services.db_service.preportal_processor import update_portal_status_for_users
+from src.portals.nas.main_process.request_dashboard_page import open_request_dashboard_page
+from src.services.db_service.nas.member_data_loader import (
+    load_member_process_values,
+    load_process_selector,
+)
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
 
 
@@ -69,17 +72,6 @@ def _init_logger(run_id: str, request_id: str | None = None) -> logging.Logger:
     return logger
 
 
-def _merge_values(base_values: dict, override_values: dict) -> dict:
-    merged = dict(base_values or {})
-    for key, value in (override_values or {}).items():
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        merged[key] = value
-    return merged
-
-
 def _resolve_process_key(request_type: str, action_type: str) -> str:
     request_upper = str(request_type or "").strip().upper()
     action_upper = str(action_type or "").strip().upper()
@@ -89,6 +81,9 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
 
     if request_upper == "ADD" and action_upper in {"BATCH", "BULK"}:
         return "add_batch"
+
+    if request_upper == "ADD" and action_upper in {"FAMILY", "FAMILY_MEMBER"}:
+        return "add_family"
 
     if request_upper == "DELETE" and action_upper in {"INDIVIDUAL", "MANUAL"}:
         return "delete_manual"
@@ -102,6 +97,17 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
     raise NotImplementedError(
         f"NAS process not implemented for RequestType={request_upper}, ActionType={action_upper}"
     )
+
+
+def _merge_values(base_values: dict, override_values: dict) -> dict:
+    merged = dict(base_values or {})
+    for key, value in (override_values or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        merged[key] = value
+    return merged
 
 
 def _read_bool_env(name: str) -> bool | None:
@@ -147,6 +153,7 @@ async def run(
     logger = _init_logger(run_id=run_id, request_id=request_id)
     run_dir = _build_run_log_dir(run_id=run_id, request_id=request_id)
     request_user_ids = [str(item).strip() for item in (request_user_ids or []) if str(item).strip()]
+    _ = request_user_ids
     process_key = _resolve_process_key(request_type=request_type, action_type=action_type)
 
     config = load_yaml_file("config/base.yml")
@@ -155,9 +162,9 @@ async def run(
         "locators/nas/main/new_button_page.yml",
         section="new_button_page",
     )
-    add_member_selectors = load_section_from_yaml(
-        "locators/nas/main/add_member_page.yml",
-        section="add_member_page",
+    request_dashboard_selectors = load_section_from_yaml(
+        "locators/nas/main/request_dashboard_page.yml",
+        section="request_dashboard_page",
     )
     accordion_selectors = load_section_from_yaml(
         "locators/nas/main/accordion_page.yml",
@@ -169,6 +176,17 @@ async def run(
     login_values["password"] = os.getenv("NAS_PASSWORD", login_values.get("password", ""))
 
     if use_database:
+        selector = load_process_selector(
+            portal_name="NAS",
+            request_id=request_id,
+            user_id=user_id,
+            logger=logger,
+        )
+        request_type = selector["RequestType"]
+        action_type = selector["ActionType"]
+        request_id = selector.get("RequestId") or request_id
+        process_key = _resolve_process_key(request_type=request_type, action_type=action_type)
+
         db_result = load_member_process_values(
             portal_name="NAS",
             request_type=request_type,
@@ -184,7 +202,7 @@ async def run(
         logger = _init_logger(run_id=run_id, request_id=request_id)
         logger.info(
             "NAS database row loaded | "
-            f"RequestId={db_result.request_id} | ProcessKey={process_key}"
+            f"RequestId={db_result.request_id} | ActionType={action_type} | ProcessKey={process_key}"
         )
 
     paths_config = config.get("paths", {}) if isinstance(config, dict) else {}
@@ -281,31 +299,31 @@ async def run(
                 logger=logger,
             )
 
-            await open_add_member_page(
+            await open_request_dashboard_page(
                 page=page,
-                selectors=add_member_selectors,
+                selectors=request_dashboard_selectors,
+                process_key=process_key,
                 logger=logger,
             )
 
-            await select_company_accordion(
-                page=page,
-                selectors=accordion_selectors,
-                values=add_member_values,
-                logger=logger,
-            )
+            if process_key == "add_individual":
+                await select_company_accordion(
+                    page=page,
+                    selectors=accordion_selectors,
+                    values=add_member_values,
+                    logger=logger,
+                )
+                await select_sub_policy_add_member(
+                    page=page,
+                    selectors=accordion_selectors,
+                    values=add_member_values,
+                    logger=logger,
+                )
 
             add_member_shot = run_dir / "nas_add_member_accordion_selected.png"
             await page.screenshot(path=str(add_member_shot), full_page=True)
             logger.info(f"Saved NAS add member screenshot: {add_member_shot}")
 
-            if use_database and request_id and request_user_ids:
-                update_portal_status_for_users(
-                    request_id=request_id,
-                    user_ids=request_user_ids,
-                    status="SUCCESS",
-                    failure_reason=None,
-                    logger=logger,
-                )
         except Exception as exc:
             logger.error(f"NAS login flow failed: {exc}")
             if page is not None:
@@ -315,15 +333,6 @@ async def run(
                     logger.info(f"Saved NAS login error screenshot: {error_shot}")
                 except Exception as shot_exc:
                     logger.error(f"Failed to save NAS login error screenshot: {shot_exc}")
-
-            if use_database and request_id and request_user_ids:
-                update_portal_status_for_users(
-                    request_id=request_id,
-                    user_ids=request_user_ids,
-                    status="FAILED",
-                    failure_reason=str(exc),
-                    logger=logger,
-                )
             raise
         finally:
             if context is not None:

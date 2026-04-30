@@ -9,8 +9,8 @@ from pathlib import Path
 
 from src.portals.nas.nas_main import run as run_nas
 from src.portals.sukoon.sukoon_main import InvalidMembersMappedError, run as run_sukoon
-from src.services.db_service.member_data_loader import load_process_selector_by_request_id
-from src.services.db_service.preportal_processor import (
+from src.services.db_service.sukoon.member_data_loader import load_process_selector_by_request_id
+from src.services.db_service.sukoon.preportal_processor import (
 	ClaimedRequest,
 	claim_next_pending_request,
 	update_portal_status_for_users,
