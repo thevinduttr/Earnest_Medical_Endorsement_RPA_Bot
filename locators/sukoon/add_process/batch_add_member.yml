@@ -16,3 +16,4 @@ batch_add_member:
   batch_supporting_document_input: "#document-type"
   batch_comments: "#divComments textarea"
   batch_validate_button: "#container div:nth-of-type(4) div.col-md-2 > button"
+  batch_submit_button: "#btnSubmit"

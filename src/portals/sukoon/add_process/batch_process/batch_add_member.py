@@ -23,6 +23,7 @@ class BatchValidationError:
 class BatchAddResult:
     validation_message: str | None
     invalid_members: List[BatchValidationError]
+    reference_number: str | None = None
 
 
 def _normalize_text(value: Any) -> str:
@@ -139,6 +140,65 @@ async def _is_submit_visible(page: Page) -> bool:
         return False
     except Exception:
         return False
+
+
+async def _extract_submission_reference_number(page: Page) -> str | None:
+    selectors = [
+        "[data-bind='text: submissionReferenceNumber']",
+        ".row.border.table-inside-padding [data-bind='text: submissionReferenceNumber']",
+    ]
+
+    for selector in selectors:
+        locator = page.locator(selector)
+        count = await locator.count()
+        for index in range(count):
+            candidate = locator.nth(index)
+            if await candidate.is_visible():
+                text = _normalize_text(await candidate.inner_text())
+                if text:
+                    return text
+
+    return None
+
+
+async def _submit_batch_and_extract_reference(
+    page: Page,
+    selectors: Dict[str, Any],
+    logger: logging.Logger,
+) -> str:
+    submit_selector = ensure_selector_present(selectors, "batch_submit_button", logger)
+    await click_element(
+        page,
+        submit_selector,
+        "Click Submit",
+        logger,
+        timeout_ms=30000,
+        wait_for_load=True,
+        wait_for_loader=True,
+        post_wait_ms=400,
+        fail_on_validation_error=False,
+    )
+
+    try:
+        await page.wait_for_url("**/PolicyServicing/Member/AdditionReview*", timeout=60000)
+        logger.info("Addition review URL detected after submit")
+    except Exception as exc:
+        logger.warning(f"Addition review URL wait skipped/timeout: {exc}")
+
+    try:
+        await page.locator("[data-bind='text: submissionReferenceNumber']").first.wait_for(
+            state="visible",
+            timeout=30000,
+        )
+    except Exception:
+        pass
+
+    reference_number = await _extract_submission_reference_number(page)
+    if not reference_number:
+        raise RuntimeError("Reference number not found on addition review page after submit")
+
+    logger.info(f"Batch submission reference number extracted: {reference_number}")
+    return reference_number
 
 
 async def _wait_for_validation_outcome(
@@ -442,5 +502,15 @@ async def batch_add_member(
     ):
         raise RuntimeError(f"Click Validate: {validate_result.validation_message}")
 
+    reference_number = await _submit_batch_and_extract_reference(
+        page=page,
+        selectors=batch_selectors,
+        logger=logger,
+    )
+
     logger.info("Batch member add process completed")
-    return validate_result
+    return BatchAddResult(
+        validation_message=validate_result.validation_message,
+        invalid_members=validate_result.invalid_members,
+        reference_number=reference_number,
+    )

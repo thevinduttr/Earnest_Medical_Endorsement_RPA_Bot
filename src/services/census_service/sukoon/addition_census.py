@@ -36,7 +36,7 @@ def _value_from_addition_row(row: Dict[str, Any], header: str, row_number: int) 
     if header == "category":
         return normalize_scalar(row.get("Category"))
     if header == "region":
-        return normalize_scalar(row.get("WorkRegion") or row.get("ResidenceRegion"))
+        return normalize_scalar(row.get("WorkRegion"))
     if header == "lsb":
         return normalize_scalar(row.get("SalaryBand"))
     if header == "nationality":

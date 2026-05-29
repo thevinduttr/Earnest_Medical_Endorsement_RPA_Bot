@@ -35,6 +35,7 @@ from src.utils.upload_file_paths import get_upload_paths
 
 
 STATUS_TABLE = "[dbo].[EndorsementRequestStatus]"
+MEMBER_TABLE = "[dbo].[EndorsementRequestsMemberData]"
 
 
 class InvalidMembersMappedError(RuntimeError):
@@ -193,6 +194,42 @@ WHERE RequestId = ?
 	logger.info(
 		"PortalStatus updated for user | "
 		f"RequestId={request_id} | UserId={user_id} | Status={status_value}"
+	)
+
+
+def _update_member_reference_number_for_users(
+	*,
+	request_id: str,
+	user_ids: list[str],
+	reference_number: str,
+	logger: logging.Logger,
+) -> None:
+	request_id_text = str(request_id or "").strip()
+	reference_text = str(reference_number or "").strip()
+	normalized_user_ids = [str(user_id).strip() for user_id in (user_ids or []) if str(user_id).strip()]
+	if not request_id_text or not reference_text or not normalized_user_ids:
+		return
+
+	query = f"""
+UPDATE {MEMBER_TABLE}
+SET ReferenceNumber = ?
+WHERE RequestId = ?
+  AND UserId = ?
+"""
+
+	with AzureSQLConnection(logger=logger) as db_connection:
+		connection = db_connection.connect()
+		cursor = connection.cursor()
+		try:
+			for user_id_text in normalized_user_ids:
+				cursor.execute(query, [reference_text, request_id_text, user_id_text])
+			connection.commit()
+		finally:
+			cursor.close()
+
+	logger.info(
+		"Member reference number updated | "
+		f"RequestId={request_id_text} | Users={len(normalized_user_ids)} | Reference={reference_text}"
 	)
 
 
@@ -1149,6 +1186,18 @@ async def run(
 					raise InvalidMembersMappedError(
 						"Batch validate returned Invalid Members. "
 						"PortalStatus was updated to FAILED for mapped members."
+					)
+
+				reference_number = str(batch_result.reference_number or "").strip()
+				if not reference_number:
+					raise RuntimeError("Batch submit succeeded but reference number was not extracted")
+
+				if use_database and resolved_request_id and resolved_request_user_ids:
+					_update_member_reference_number_for_users(
+						request_id=resolved_request_id,
+						user_ids=resolved_request_user_ids,
+						reference_number=reference_number,
+						logger=logger,
 					)
 
 				success_shot = run_dir / "batch_add_success.png"
