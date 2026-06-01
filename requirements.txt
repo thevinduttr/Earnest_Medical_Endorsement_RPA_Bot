@@ -6,3 +6,5 @@ openpyxl
 azure-storage-blob
 pywin32
 Pillow
+requests
+msal
