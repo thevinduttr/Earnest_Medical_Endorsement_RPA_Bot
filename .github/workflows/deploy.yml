@@ -3,7 +3,7 @@ name: Deploy Medical Endorsement Bot
 on:
   push:
     branches:
-      - master
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -30,58 +30,18 @@ jobs:
           python -m compileall main.py src tests
 
   deploy:
-    name: Deploy to Windows Bot Server
+    name: Deploy to Windows Server
     needs: validate
-    runs-on: [self-hosted, Windows, X64]
-
-    env:
-      DEPLOY_PATH: C:\Users\opc\Documents\Algospring\Medical_Endorsement
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Ensure deploy folders exist
+      - name: Deploy over SSH
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path "$env:DEPLOY_PATH"
-          New-Item -ItemType Directory -Force -Path "$env:DEPLOY_PATH\config\env"
-          New-Item -ItemType Directory -Force -Path "$env:DEPLOY_PATH\data\logs"
-          New-Item -ItemType Directory -Force -Path "$env:DEPLOY_PATH\data\attachments"
-          New-Item -ItemType Directory -Force -Path "$env:DEPLOY_PATH\data\browser_profiles"
+          mkdir $env:USERPROFILE\.ssh -Force
 
-      - name: Copy application files
-        shell: powershell
-        run: |
-          robocopy "$env:GITHUB_WORKSPACE" "$env:DEPLOY_PATH" /MIR `
-            /XD ".git" ".github" "venv" ".venv" "__pycache__" `
-                "data\logs" "data\attachments" "data\browser_profiles" "config\env" `
-            /XF "*.pyc" "*.pyo" "*.log" `
-            /R:2 /W:2
+          "${{ secrets.VM_SSH_KEY }}" | Out-File -FilePath $env:USERPROFILE\.ssh\id_ed25519 -Encoding ascii
+          icacls $env:USERPROFILE\.ssh\id_ed25519 /inheritance:r
+          icacls $env:USERPROFILE\.ssh\id_ed25519 /grant:r "$env:USERNAME:F"
 
-          if ($LASTEXITCODE -le 7) {
-            exit 0
-          }
-
-          exit $LASTEXITCODE
-
-      - name: Create virtual environment
-        shell: powershell
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          if (!(Test-Path ".\venv\Scripts\python.exe")) {
-            python -m venv venv
-          }
-
-      - name: Install production dependencies
-        shell: powershell
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          .\venv\Scripts\python.exe -m pip install --upgrade pip
-          .\venv\Scripts\python.exe -m pip install -r requirements.txt
-
-      - name: Verify deployed code
-        shell: powershell
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          .\venv\Scripts\python.exe -m compileall main.py src tests
+          ssh -o StrictHostKeyChecking=no -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -ExecutionPolicy Bypass -Command `"cd C:\Users\opc\Desktop\Portal_System; git pull origin dev; if (!(Test-Path .\venv\Scripts\python.exe)) { python -m venv venv }; .\venv\Scripts\python.exe -m pip install --upgrade pip; .\venv\Scripts\python.exe -m pip install -r requirements.txt; .\venv\Scripts\python.exe -m compileall main.py src tests; schtasks /End /TN MedicalEndorsementBot 2>`$null; schtasks /Run /TN MedicalEndorsementBot`""
