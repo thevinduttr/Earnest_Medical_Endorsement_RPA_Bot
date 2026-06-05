@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable
+from uuid import uuid4
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -187,7 +189,9 @@ def fill_census_template(
 
     resolved_output = Path(output_path).resolve()
     resolved_output.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(resolved_output)
+    temporary_output = resolved_output.with_name(f"{resolved_output.stem}.{uuid4().hex}.tmp{resolved_output.suffix}")
+    workbook.save(temporary_output)
+    os.replace(temporary_output, resolved_output)
 
     if logger:
         logger.info(

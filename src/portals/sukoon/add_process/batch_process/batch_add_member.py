@@ -496,11 +496,22 @@ async def batch_add_member(
         )
         return validate_result
 
-    if validate_result.validation_message and any(
-        token in validate_result.validation_message.lower()
-        for token in ("required", "error", "cannot", "failed", "invalid")
-    ):
-        raise RuntimeError(f"Click Validate: {validate_result.validation_message}")
+    if validate_result.validation_message:
+        msg = validate_result.validation_message.lower()
+        if any(token in msg for token in ("required", "error", "cannot", "failed", "invalid")):
+            # Some portals return a message that contains 'required' while also
+            # indicating the records were validated successfully and the user
+            # must click Submit (for example: "Census records validated successfully..."
+            # "Please upload above required document(s) and click on 'Submit' button...").
+            # Treat messages that contain both 'validated' and 'submit' as a successful
+            # validation outcome and proceed to submit rather than raising an error.
+            if "validated" in msg and "submit" in msg:
+                # Proceed to submit flow
+                logger.info(
+                    "Validation message indicates successful validation and requires Submit; proceeding to submit."
+                )
+            else:
+                raise RuntimeError(f"Click Validate: {validate_result.validation_message}")
 
     reference_number = await _submit_batch_and_extract_reference(
         page=page,

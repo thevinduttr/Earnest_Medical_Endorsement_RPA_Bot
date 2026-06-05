@@ -45,6 +45,7 @@ Thumbs.db
 *.env
 .env.*
 config/env/
+config/*.ini
 config/env/*.env
 *outlook_token_cache.json
 

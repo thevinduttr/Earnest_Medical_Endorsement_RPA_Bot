@@ -4,13 +4,13 @@ import asyncio
 import logging
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.portals.nas.nas_main import run as run_nas
 from src.portals.sukoon.sukoon_main import InvalidMembersMappedError, run as run_sukoon
-from src.services.db_service.sukoon.member_data_loader import load_process_selector_by_request_id
-from src.services.db_service.sukoon.preportal_processor import (
+from src.services.db_service.sukoon_member_data_loader import load_process_selector_by_request_id
+from src.services.db_service.sukoon_preportal_processor import (
 	ClaimedRequest,
 	claim_next_pending_request,
 	update_portal_status_for_users,
@@ -57,6 +57,93 @@ def _safe_int(value: object, default: int) -> int:
 	return resolved if resolved >= 0 else default
 
 
+def _close_open_excel_workbook(workbook_path: Path, logger: logging.Logger) -> bool:
+	resolved_workbook_path = Path(workbook_path).resolve()
+	if not resolved_workbook_path.exists():
+		return False
+
+	try:
+		import pythoncom
+		from win32com.client import GetActiveObject
+	except Exception:
+		return False
+
+	excel_app = None
+	pythoncom.CoInitialize()
+	try:
+		try:
+			excel_app = GetActiveObject("Excel.Application")
+		except Exception:
+			return False
+
+		for workbook in list(excel_app.Workbooks):
+			try:
+				if Path(str(workbook.FullName)).resolve() == resolved_workbook_path:
+					workbook.Close(SaveChanges=False)
+					logger.info("Closed open Excel workbook before cleanup: %s", resolved_workbook_path)
+					return True
+			except Exception as exc:
+				logger.warning("Failed to close Excel workbook %s: %s", resolved_workbook_path, exc)
+				return False
+	finally:
+		pythoncom.CoUninitialize()
+
+	return False
+
+
+def _close_open_excel_workbooks_under(path: Path, logger: logging.Logger) -> int:
+	closed_count = 0
+	search_root = Path(path)
+	if search_root.is_file():
+		return 1 if _close_open_excel_workbook(search_root, logger) else 0
+
+	if not search_root.exists():
+		return 0
+
+	for workbook_path in search_root.rglob("*.xlsx"):
+		if _close_open_excel_workbook(workbook_path, logger):
+			closed_count += 1
+	return closed_count
+
+
+def _close_all_excel_processes(logger: logging.Logger) -> None:
+	try:
+		result = subprocess.run(
+			["taskkill", "/F", "/IM", "EXCEL.EXE", "/T"],
+			capture_output=True,
+			text=True,
+			check=False,
+		)
+	except Exception as exc:
+		logger.warning("Failed to stop Excel processes before request start: %s", exc)
+		return
+
+	if result.returncode == 0:
+		logger.info("Closed running Excel processes before request start")
+		return
+
+	output = (result.stdout or result.stderr or "").strip()
+	if output:
+		logger.info("Excel shutdown command result: %s", output)
+
+
+def _remove_item_with_retry(item: Path, logger: logging.Logger) -> None:
+	for attempt in range(2):
+		try:
+			if item.is_file() or item.is_symlink():
+				item.unlink(missing_ok=True)
+			elif item.is_dir():
+				shutil.rmtree(item, ignore_errors=False)
+			return
+		except PermissionError:
+			if attempt == 0:
+				closed_count = _close_open_excel_workbooks_under(item, logger)
+				if closed_count > 0:
+					logger.info("Closed %s open Excel workbook(s) under locked path: %s", closed_count, item)
+				continue
+			raise
+
+
 def _load_worker_settings() -> WorkerSettings:
 	config = load_yaml_file("config/base.yml")
 	worker_cfg = config.get("worker", {}) if isinstance(config, dict) else {}
@@ -89,15 +176,18 @@ def _clear_attachments_workspace(logger: logging.Logger) -> None:
 	attachments_root = Path("data/attachments")
 	attachments_root.mkdir(parents=True, exist_ok=True)
 
+	for workbook_path in attachments_root.rglob("*.xlsx"):
+		_close_open_excel_workbook(workbook_path, logger)
+
 	removed_files = 0
 	removed_dirs = 0
 
 	for item in attachments_root.iterdir():
 		if item.is_file() or item.is_symlink():
-			item.unlink(missing_ok=True)
+			_remove_item_with_retry(item, logger)
 			removed_files += 1
 		elif item.is_dir():
-			shutil.rmtree(item, ignore_errors=False)
+			_remove_item_with_retry(item, logger)
 			removed_dirs += 1
 
 	logger.info(
@@ -151,49 +241,16 @@ async def _process_sukoon_claim(
 	)
 
 
-async def _process_nas_claim(
-	*,
-	request_id: str,
-	request_type: str,
-	action_type: str,
-	user_ids: list[str],
-	logger: logging.Logger,
-) -> None:
-	if action_type == "INDIVIDUAL":
-		for user_id in user_ids:
-			try:
-				await run_nas(
-					request_type=request_type,
-					action_type=action_type,
-					request_id=request_id,
-					user_id=user_id,
-					request_user_ids=[user_id],
-					use_database=True,
-				)
-			except Exception as exc:
-				logger.exception(
-					"NAS individual processing failed | RequestId=%s | UserId=%s | Error=%s",
-					request_id,
-					user_id,
-					exc,
-				)
-				update_portal_status_for_users(
-					request_id=request_id,
-					user_ids=[user_id],
-					status="FAILED",
-					failure_reason=str(exc),
-					logger=logger,
-				)
-		return
-
-	await run_nas(
-		request_type=request_type,
-		action_type=action_type,
+def _process_nas_claim(*, request_id: str, user_ids: list[str], logger: logging.Logger) -> None:
+	reason = "NAS portal processing is not implemented in this repository"
+	update_portal_status_for_users(
 		request_id=request_id,
-		user_id=None,
-		request_user_ids=user_ids,
-		use_database=True,
+		user_ids=user_ids,
+		status="FAILED",
+		failure_reason=reason,
+		logger=logger,
 	)
+	logger.error("NAS request marked as FAILED | RequestId=%s | Users=%s", request_id, len(user_ids))
 
 
 async def _dispatch_claimed_request(claimed: ClaimedRequest, logger: logging.Logger) -> None:
@@ -225,13 +282,7 @@ async def _dispatch_claimed_request(claimed: ClaimedRequest, logger: logging.Log
 		return
 
 	if portal_name == "NAS":
-		await _process_nas_claim(
-			request_id=request_id,
-			request_type=request_type,
-			action_type=action_type,
-			user_ids=user_ids,
-			logger=logger,
-		)
+		_process_nas_claim(request_id=request_id, user_ids=user_ids, logger=logger)
 		return
 
 	raise ValueError(f"Unsupported PortalName: {portal_name}")
@@ -261,6 +312,7 @@ async def _run_queue_worker() -> None:
 			continue
 
 		try:
+			_close_all_excel_processes(logger)
 			if settings.clear_attachments_each_cycle:
 				_clear_attachments_workspace(logger)
 			await _dispatch_claimed_request(claimed=claimed, logger=logger)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import gc
 import csv
 from pathlib import Path
 import logging
 import shutil
 from zipfile import ZIP_DEFLATED, ZipFile
+from typing import Any, Mapping
 
 from playwright.async_api import async_playwright
 
@@ -21,16 +23,26 @@ from src.services.census_service.sukoon.deletion_census import (
 )
 from src.services.blob_service.azure_blob_download_service import AzureBlobDownloadService
 from src.services.db_service.azure_db_connection import AzureSQLConnection
-from src.services.db_service.sukoon.preportal_processor import (
+from src.services.db_service.sukoon_preportal_processor import (
 	_download_documents_user_wise,
 	_fetch_request_documents_for_users,
 )
-from src.services.db_service.sukoon.portal_member_error_sync import (
+from src.services.db_service.sukoon_portal_member_error_sync import (
 	MemberErrorSyncSummary,
 	sync_batch_validation_errors_to_portal_status,
 )
-from src.services.db_service.sukoon.member_data_loader import load_member_process_values
+from src.services.db_service.sukoon_member_data_loader import load_member_process_values
+from src.services.mail_service.outlook_mail_service import send_outlook_email
+from src.services.mail_service.sukoon_email_templates import (
+	build_unexpected_body,
+	build_unexpected_subject,
+	build_validation_body,
+	build_validation_subject,
+	build_success_body,
+	build_success_subject,
+)
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
+from src.utils.mail_config import MailConfig
 from src.utils.upload_file_paths import get_upload_paths
 
 
@@ -40,6 +52,129 @@ MEMBER_TABLE = "[dbo].[EndorsementRequestsMemberData]"
 
 class InvalidMembersMappedError(RuntimeError):
 	"""Validation failed after persisting member-level portal failure reasons."""
+
+
+class TransientRunError(RuntimeError):
+	def __init__(
+		self,
+		message: str,
+		*,
+		process_data: Mapping[str, object],
+		screenshot_path: Path | None = None,
+	) -> None:
+		super().__init__(message)
+		self.process_data = dict(process_data)
+		self.screenshot_path = screenshot_path
+		self.error_message = message
+
+
+def _resolve_policy_number(process_values: Mapping[str, Any]) -> str:
+	for key in ("PolicyNumber", "policy_number", "company_name"):
+		value = str(process_values.get(key, "")).strip()
+		if value:
+			return value
+	return ""
+
+
+def _build_mail_process_data(
+	*,
+	request_id: str,
+	policy_number: str,
+	action_type: str,
+	portal_name: str = "SUKOON",
+	status: str,
+	reference_number: str = "",
+) -> dict[str, str]:
+	return {
+		"RequestId": str(request_id or "").strip(),
+		"PolicyNumber": str(policy_number or "").strip(),
+		"ActionType": str(action_type or "").strip(),
+		"PortalName": str(portal_name or "").strip(),
+		"Status": str(status or "").strip(),
+		"ReferenceNumber": str(reference_number or "").strip(),
+	}
+
+
+def _invalid_members_to_rows(invalid_members: list) -> list[dict[str, str]]:
+	rows: list[dict[str, str]] = []
+	for member in invalid_members:
+		rows.append(
+			{
+				"First Name": str(getattr(member, "first_name", "")).strip(),
+				"Last Name": str(getattr(member, "last_name", "")).strip(),
+				"EID Number": str(getattr(member, "eid_number", "")).strip(),
+				"Employee Number": str(getattr(member, "employee_number", "")).strip(),
+				"Error Message": str(getattr(member, "error_message", "")).strip(),
+			}
+		)
+	return rows
+
+
+async def _capture_run_screenshot(page, run_dir: Path, prefix: str, logger: logging.Logger) -> Path | None:
+	if page is None:
+		return None
+
+	screenshot_path = run_dir / f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+	try:
+		await page.screenshot(path=str(screenshot_path), full_page=True)
+		logger.info(f"Saved {prefix} screenshot: {screenshot_path}")
+		return screenshot_path
+	except Exception as error:
+		logger.error(f"Failed to save {prefix} screenshot: {error}")
+		return None
+
+
+def _send_validation_error_email(
+	*,
+	mail_config: MailConfig,
+	process_data: Mapping[str, object],
+	invalid_members: list,
+	screenshot_path: Path | None,
+	logger: logging.Logger,
+) -> None:
+	validation_rows = _invalid_members_to_rows(invalid_members)
+	attachments = [screenshot_path] if screenshot_path else []
+	subject = build_validation_subject(
+		str(process_data.get("RequestId", "")).strip(),
+		str(process_data.get("PolicyNumber", "")).strip(),
+	)
+	body = build_validation_body(process_data, validation_rows, attachments)
+	try:
+		send_outlook_email(
+			mail_config,
+			subject=subject,
+			body=body,
+			attachments=attachments or None,
+			logger=logger,
+		)
+	except Exception as error:
+		logger.error(f"Failed to send validation error email: {error}")
+
+
+def _send_unexpected_error_email(
+	*,
+	mail_config: MailConfig,
+	process_data: Mapping[str, object],
+	error_message: str,
+	screenshot_paths: list[Path],
+	logger: logging.Logger,
+	retry_count: int,
+) -> None:
+	subject = build_unexpected_subject(
+		str(process_data.get("RequestId", "")).strip(),
+		str(process_data.get("PolicyNumber", "")).strip(),
+	)
+	body = build_unexpected_body(process_data, error_message, screenshot_paths, retry_count=retry_count)
+	try:
+		send_outlook_email(
+			mail_config,
+			subject=subject,
+			body=body,
+			attachments=screenshot_paths or None,
+			logger=logger,
+		)
+	except Exception as error:
+		logger.error(f"Failed to send unexpected error email: {error}")
 
 
 def _make_run_id() -> str:
@@ -899,14 +1034,19 @@ def _open_census_in_excel_and_save(census_path: str | Path, logger: logging.Logg
 				workbook.Close(SaveChanges=False)
 			except Exception:
 				pass
+			finally:
+				workbook = None
 
 		if excel_app is not None:
 			try:
 				excel_app.Quit()
 			except Exception:
 				pass
+			finally:
+				excel_app = None
 
 		pythoncom.CoUninitialize()
+		gc.collect()
 
 
 def _resolve_process_key(request_type: str, action_type: str) -> str:
@@ -940,6 +1080,48 @@ async def run(
 	user_id: str | None = None,
 	request_user_ids: list[str] | None = None,
 	use_database: bool = True,
+):
+	mail_config = MailConfig.load(Path("config/mail.ini"))
+	retry_logger = logging.getLogger("sukoon_main")
+	collected_screenshots: list[Path] = []
+	for attempt in range(1, 4):
+		try:
+			return await _run_once(
+				request_type=request_type,
+				action_type=action_type,
+				request_id=request_id,
+				user_id=user_id,
+				request_user_ids=request_user_ids,
+				use_database=use_database,
+				mail_config=mail_config,
+			)
+		except InvalidMembersMappedError:
+			raise
+		except TransientRunError as exc:
+			if exc.screenshot_path:
+				collected_screenshots.append(exc.screenshot_path)
+			if attempt < 3:
+				retry_logger.warning(f"Transient Sukoon error on attempt {attempt}/3: {exc}. Retrying.")
+				continue
+			_send_unexpected_error_email(
+				mail_config=mail_config,
+				process_data=exc.process_data,
+				error_message=exc.error_message,
+				screenshot_paths=collected_screenshots,
+				logger=retry_logger,
+				retry_count=3,
+			)
+			raise
+
+
+async def _run_once(
+	request_type: str,
+	action_type: str,
+	request_id: str | None = None,
+	user_id: str | None = None,
+	request_user_ids: list[str] | None = None,
+	use_database: bool = True,
+	mail_config: MailConfig | None = None,
 ):
 	run_id = _make_run_id()
 	resolved_request_id = _normalize_request_id(request_id)
@@ -1064,6 +1246,20 @@ async def run(
 			raise
 
 	# Step 04: Resolve browser launch configuration (always non-persistent context).
+	if mail_config is None:
+		mail_config = MailConfig.load(Path("config/mail.ini"))
+
+	current_process_values: Mapping[str, Any]
+	if process_key == "add_individual":
+		current_process_values = manual_add_values
+	elif process_key == "add_batch":
+		current_process_values = batch_add_values
+	elif process_key == "delete_manual":
+		current_process_values = manual_delete_values
+	else:
+		current_process_values = batch_delete_values
+
+	policy_number = _resolve_policy_number(current_process_values)
 	browser_config = config.get("browser", {})
 	headless = bool(browser_config.get("headless", False))
 	viewport_cfg = browser_config.get("viewport", {})
@@ -1183,6 +1379,21 @@ async def run(
 						f"UpdatedUsers={sync_summary.updated_users} | "
 						f"UnmappedRows={sync_summary.unmapped_rows}"
 					)
+					validation_screenshot = await _capture_run_screenshot(page, run_dir, "validation_error", logger)
+					validation_process_data = _build_mail_process_data(
+						request_id=resolved_request_id or request_id or "",
+						policy_number=policy_number,
+						action_type=action_type,
+						portal_name="SUKOON",
+						status="Validation Error",
+					)
+					_send_validation_error_email(
+						mail_config=mail_config,
+						process_data=validation_process_data,
+						invalid_members=batch_result.invalid_members,
+						screenshot_path=validation_screenshot,
+						logger=logger,
+					)
 					raise InvalidMembersMappedError(
 						"Batch validate returned Invalid Members. "
 						"PortalStatus was updated to FAILED for mapped members."
@@ -1203,6 +1414,36 @@ async def run(
 				success_shot = run_dir / "batch_add_success.png"
 				await page.screenshot(path=str(success_shot), full_page=True)
 				logger.info(f"Saved batch add success screenshot: {success_shot}")
+
+				# Try to attach endorsement PDF if available (downloaded by dashboard logic)
+				attachments = [success_shot]
+				tax_invoice = Path("data/outputs/tax_invoice.pdf")
+				if tax_invoice.exists():
+					attachments.append(tax_invoice)
+
+				# Build and send success email with extracted reference number and any available extracted data
+				success_process_data = _build_mail_process_data(
+					request_id=resolved_request_id or request_id or "",
+					policy_number=policy_number,
+					action_type=action_type,
+					portal_name="SUKOON",
+					status="Addion Completed",
+					reference_number=reference_number,
+				)
+				# include screenshots list for template
+				success_process_data["screenshots"] = [str(success_shot)]
+				try:
+					subject = build_success_subject(success_process_data)
+					body = build_success_body(success_process_data, attachments=attachments)
+					send_outlook_email(
+						mail_config,
+						subject=subject,
+						body=body,
+						attachments=attachments,
+						logger=logger,
+					)
+				except Exception as error:
+					logger.error(f"Failed to send success email: {error}")
 
 				if use_database and resolved_request_id and resolved_request_user_ids:
 					_update_portal_status_for_users(
@@ -1279,14 +1520,22 @@ async def run(
 					failure_reason=str(exc),
 					logger=logger,
 				)
-			if page is not None:
-				try:
-					error_shot = run_dir / "login_error.png"
-					await page.screenshot(path=str(error_shot), full_page=True)
-					logger.info(f"Saved error screenshot: {error_shot}")
-				except Exception as shot_exc:
-					logger.error(f"Failed to save error screenshot: {shot_exc}")
-			raise
+			if skip_generic_failure_update:
+				raise
+
+			error_shot = await _capture_run_screenshot(page, run_dir, "network_loading_issue", logger)
+			failure_process_data = _build_mail_process_data(
+				request_id=resolved_request_id or request_id or "",
+				policy_number=policy_number,
+				action_type=action_type,
+				portal_name="SUKOON",
+				status="Network or Loading Issue",
+			)
+			raise TransientRunError(
+				str(exc),
+				process_data=failure_process_data,
+				screenshot_path=error_shot,
+			) from exc
 		finally:
 			if context is not None:
 				await context.close()
