@@ -49,6 +49,9 @@ jobs:
 
           Write-Host "Testing SSH connection..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "echo SSH connection successful"
+          if ($LASTEXITCODE -ne 0) {
+            throw "SSH connection test failed with exit code $LASTEXITCODE."
+          }
 
           Write-Host "Starting remote deployment..."
           $remoteScript = @'
@@ -84,3 +87,6 @@ jobs:
 
           $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($remoteScript))
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedScript"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Remote deployment failed with exit code $LASTEXITCODE."
+          }
