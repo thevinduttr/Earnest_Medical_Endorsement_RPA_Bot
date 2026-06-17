@@ -77,8 +77,32 @@ jobs:
           }
           Write-Host "Using Git at: $git"
 
-          Write-Host "[$(Get-Date -Format o)] Pulling latest code from dev..."
-          & $git pull origin dev
+          Write-Host "[$(Get-Date -Format o)] Current repository state..."
+          & $git remote -v
+          & $git status --short --branch
+          & $git rev-parse HEAD
+
+          Write-Host "[$(Get-Date -Format o)] Fetching latest code from origin..."
+          & $git fetch origin dev
+          if ($LASTEXITCODE -ne 0) {
+            throw "git fetch origin dev failed."
+          }
+
+          Write-Host "[$(Get-Date -Format o)] Checking out dev..."
+          & $git checkout dev
+          if ($LASTEXITCODE -ne 0) {
+            throw "git checkout dev failed."
+          }
+
+          Write-Host "[$(Get-Date -Format o)] Resetting VM working tree to origin/dev..."
+          & $git reset --hard origin/dev
+          if ($LASTEXITCODE -ne 0) {
+            throw "git reset --hard origin/dev failed."
+          }
+
+          Write-Host "[$(Get-Date -Format o)] Deployed repository state..."
+          & $git status --short --branch
+          & $git log -1 --oneline
 
           Write-Host "[$(Get-Date -Format o)] Checking virtual environment..."
           if (!(Test-Path .\venv\Scripts\python.exe)) {
