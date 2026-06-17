@@ -42,6 +42,6 @@ jobs:
 
           "${{ secrets.VM_SSH_KEY }}" | Out-File -FilePath $env:USERPROFILE\.ssh\id_ed25519 -Encoding ascii
           icacls $env:USERPROFILE\.ssh\id_ed25519 /inheritance:r
-          icacls $env:USERPROFILE\.ssh\id_ed25519 /grant:r "$env:USERNAME:F"
+          icacls $env:USERPROFILE\.ssh\id_ed25519 /grant:r "$($env:USERNAME):F"
 
           ssh -o StrictHostKeyChecking=no -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -ExecutionPolicy Bypass -Command `"cd C:\Users\opc\Desktop\Portal_System; git pull origin dev; if (!(Test-Path .\venv\Scripts\python.exe)) { python -m venv venv }; .\venv\Scripts\python.exe -m pip install --upgrade pip; .\venv\Scripts\python.exe -m pip install -r requirements.txt; .\venv\Scripts\python.exe -m compileall main.py src tests; schtasks /End /TN MedicalEndorsementBot 2>`$null; schtasks /Run /TN MedicalEndorsementBot`""
