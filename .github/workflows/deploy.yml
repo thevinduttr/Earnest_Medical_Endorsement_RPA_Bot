@@ -58,7 +58,8 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           Write-Host "[$(Get-Date -Format o)] Changing to project directory..."
-          cd C:\Users\opc\Desktop\Portal_System
+          $projectPath = "C:\Users\opc\Desktop\Portal_System"
+          $repoUrl = "https://github.com/thevinduttr/Earnest_Medical_Endorsement_RPA_Bot.git"
 
           $git = Get-Command git.exe -ErrorAction SilentlyContinue
           if (!$git) {
@@ -76,6 +77,29 @@ jobs:
             throw "git.exe was not found on the VM. Install Git for Windows or add git.exe to PATH for SSH sessions."
           }
           Write-Host "Using Git at: $git"
+
+          if (!(Test-Path $projectPath)) {
+            Write-Host "Project directory not found. Creating $projectPath..."
+            New-Item -ItemType Directory -Path $projectPath -Force | Out-Null
+          }
+
+          if (!(Test-Path (Join-Path $projectPath ".git"))) {
+            Write-Host "Project directory is not a Git repository. Cloning origin/dev..."
+            $parentPath = Split-Path $projectPath -Parent
+            $folderName = Split-Path $projectPath -Leaf
+            if ((Get-ChildItem -Path $projectPath -Force | Select-Object -First 1)) {
+              $backupPath = "$projectPath.backup.$(Get-Date -Format yyyyMMddHHmmss)"
+              Write-Host "Existing non-Git directory is not empty. Moving it to $backupPath..."
+              Move-Item -Path $projectPath -Destination $backupPath
+            }
+            cd $parentPath
+            & $git clone --branch dev $repoUrl $folderName
+            if ($LASTEXITCODE -ne 0) {
+              throw "git clone failed."
+            }
+          }
+
+          cd $projectPath
 
           Write-Host "[$(Get-Date -Format o)] Current repository state..."
           & $git remote -v
