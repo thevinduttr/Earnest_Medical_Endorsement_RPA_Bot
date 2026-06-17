@@ -9,7 +9,7 @@ paths:
 
 browser:
   headless: false
-  pause_after_login: true
+  pause_after_login: false
   engine: "msedge"
   channel: "msedge"
   persistent_context: true

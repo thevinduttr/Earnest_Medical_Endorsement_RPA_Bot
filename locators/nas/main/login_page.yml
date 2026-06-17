@@ -2,3 +2,8 @@ login:
   username: "#Username"
   password: "#Password"
   login_button: "button:has-text(\"Login\")"
+  mfa_heading: "h1:has-text(\"Verify your identity\")"
+  otp_inputs: ".otp-field input.inp"
+  otp_hidden_code: "form[action=\"/Accounts/MFALogin\"] input#Code"
+  otp_continue_button: "form[action=\"/Accounts/MFALogin\"] button[type=\"submit\"]:has-text(\"Continue\")"
+  otp_resend_code: "#resend-code"

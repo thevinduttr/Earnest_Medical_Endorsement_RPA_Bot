@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
 from typing import Optional, Sequence
 import base64
 import logging
+import re
+import time
 
 import requests
 
 from src.utils.mail_config import MailConfig
+
+
+GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+OTP_PATTERN = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
 
 class OutlookTokenManager:
@@ -17,7 +25,10 @@ class OutlookTokenManager:
         self.config = {
             "client_id": client_id,
             "tenant_id": tenant_id,
-            "scope": ["https://graph.microsoft.com/Mail.Send"],
+            "scope": [
+                "https://graph.microsoft.com/Mail.Send",
+                "https://graph.microsoft.com/Mail.Read",
+            ],
             "authority": f"https://login.microsoftonline.com/{tenant_id}",
         }
         self.cache_path = cache_path
@@ -85,6 +96,208 @@ def get_valid_access_token(mail_config: MailConfig, force_refresh: bool = False)
     return get_token_manager(mail_config).get_token(force_refresh=force_refresh)
 
 
+def _graph_headers(mail_config: MailConfig, *, force_refresh: bool = False) -> dict[str, str]:
+    token = get_valid_access_token(mail_config, force_refresh=force_refresh)
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+
+def _graph_request(
+    method: str,
+    url: str,
+    mail_config: MailConfig,
+    *,
+    logger: Optional[logging.Logger] = None,
+    **kwargs,
+) -> requests.Response:
+    response = requests.request(
+        method,
+        url,
+        headers=_graph_headers(mail_config),
+        timeout=60,
+        **kwargs,
+    )
+    if response.status_code == 401 and "InvalidAuthenticationToken" in response.text:
+        response = requests.request(
+            method,
+            url,
+            headers=_graph_headers(mail_config, force_refresh=True),
+            timeout=60,
+            **kwargs,
+        )
+
+    if response.status_code >= 400:
+        error = f"Microsoft Graph request failed. HTTP {response.status_code}: {response.text}"
+        if logger:
+            logger.error(error)
+        raise RuntimeError(error)
+    return response
+
+
+def _strip_html(value: str) -> str:
+    without_tags = re.sub(r"<[^>]+>", " ", str(value or ""))
+    return " ".join(unescape(without_tags).split())
+
+
+def extract_otp_from_message_text(*parts: str) -> str | None:
+    text = " ".join(_strip_html(part) for part in parts if part)
+    if not text:
+        return None
+
+    candidates = OTP_PATTERN.findall(text)
+    if not candidates:
+        return None
+
+    preferred_keywords = ("code", "verify", "identity", "broker connect", "sign in")
+    normalized = text.lower()
+    for candidate in candidates:
+        position = normalized.find(candidate)
+        start = max(0, position - 80)
+        end = min(len(normalized), position + len(candidate) + 80)
+        nearby = normalized[start:end]
+        if any(keyword in nearby for keyword in preferred_keywords):
+            return candidate
+
+    return candidates[0]
+
+
+def _parse_graph_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_since(since: datetime | None) -> datetime | None:
+    if since is None:
+        return None
+    if since.tzinfo is None:
+        return since.replace(tzinfo=timezone.utc)
+    return since.astimezone(timezone.utc)
+
+
+def _list_folder_page(
+    mail_config: MailConfig,
+    url: str,
+    *,
+    logger: Optional[logging.Logger] = None,
+) -> dict:
+    response = _graph_request("GET", url, mail_config, logger=logger)
+    return response.json()
+
+
+def _find_mail_folder_id(
+    mail_config: MailConfig,
+    folder_name: str,
+    *,
+    logger: Optional[logging.Logger] = None,
+) -> str:
+    target_name = str(folder_name or "").strip().lower()
+    if not target_name:
+        raise ValueError("OTP folder name is empty")
+
+    queue = [f"{GRAPH_BASE_URL}/me/mailFolders?$top=100&$select=id,displayName"]
+    while queue:
+        page_url = queue.pop(0)
+        data = _list_folder_page(mail_config, page_url, logger=logger)
+        for folder in data.get("value", []):
+            folder_id = str(folder.get("id") or "")
+            display_name = str(folder.get("displayName") or "")
+            if display_name.strip().lower() == target_name and folder_id:
+                return folder_id
+            if folder_id:
+                queue.append(
+                    f"{GRAPH_BASE_URL}/me/mailFolders/{folder_id}/childFolders"
+                    "?$top=100&$select=id,displayName"
+                )
+
+        next_link = data.get("@odata.nextLink")
+        if next_link:
+            queue.append(str(next_link))
+
+    raise RuntimeError(f"Outlook folder '{folder_name}' was not found")
+
+
+def _get_latest_folder_messages(
+    mail_config: MailConfig,
+    folder_id: str,
+    *,
+    logger: Optional[logging.Logger] = None,
+) -> list[dict]:
+    url = _build_latest_unread_messages_url(folder_id)
+    response = _graph_request("GET", url, mail_config, logger=logger)
+    data = response.json()
+    return list(data.get("value", []))
+
+
+def _build_latest_unread_messages_url(folder_id: str) -> str:
+    return (
+        f"{GRAPH_BASE_URL}/me/mailFolders/{folder_id}/messages"
+        "?$top=10"
+        "&$filter=isRead%20eq%20false"
+        "&$orderby=receivedDateTime%20desc"
+        "&$select=subject,bodyPreview,body,receivedDateTime,isRead"
+    )
+
+
+def find_latest_nas_otp(
+    mail_config: MailConfig,
+    *,
+    folder_name: str | None = None,
+    received_after: datetime | None = None,
+    timeout_seconds: int | None = None,
+    poll_interval_seconds: int | None = None,
+    logger: Optional[logging.Logger] = None,
+) -> str:
+    target_folder = folder_name or mail_config.otp_folder
+    timeout_value = int(timeout_seconds or mail_config.otp_poll_timeout_seconds)
+    interval_value = int(poll_interval_seconds or mail_config.otp_poll_interval_seconds)
+    received_after_utc = _normalize_since(received_after)
+
+    folder_id = _find_mail_folder_id(mail_config, target_folder, logger=logger)
+    deadline = time.monotonic() + max(1, timeout_value)
+    last_seen_received_at = None
+
+    while time.monotonic() < deadline:
+        messages = _get_latest_folder_messages(mail_config, folder_id, logger=logger)
+        for message in messages:
+            if bool(message.get("isRead")):
+                continue
+
+            received_at = _parse_graph_datetime(str(message.get("receivedDateTime") or ""))
+            if received_at:
+                last_seen_received_at = received_at.isoformat()
+            if received_after_utc:
+                if not received_at or received_at < received_after_utc:
+                    continue
+
+            body = message.get("body") or {}
+            otp = extract_otp_from_message_text(
+                str(message.get("subject") or ""),
+                str(message.get("bodyPreview") or ""),
+                str(body.get("content") or ""),
+            )
+            if otp:
+                if logger:
+                    logger.info("NAS OTP found in Outlook folder '%s'", target_folder)
+                return otp
+
+        time.sleep(max(1, interval_value))
+
+    detail = f" Last seen receivedDateTime={last_seen_received_at}." if last_seen_received_at else ""
+    raise RuntimeError(
+        f"No fresh NAS OTP email found in Outlook folder '{target_folder}' "
+        f"within {timeout_value} seconds.{detail}"
+    )
+
+
 def _attachment_payload(attachments: Sequence[Path] | None) -> list[dict]:
     payload: list[dict] = []
     for attachment in attachments or []:
@@ -137,12 +350,8 @@ def send_outlook_email(
         "saveToSentItems": True,
     }
 
-    token = get_valid_access_token(mail_config)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    response = requests.post("https://graph.microsoft.com/v1.0/me/sendMail", headers=headers, json=message, timeout=60)
+    headers = _graph_headers(mail_config)
+    response = requests.post(f"{GRAPH_BASE_URL}/me/sendMail", headers=headers, json=message, timeout=60)
 
     if response.status_code in (200, 202):
         if logger:
@@ -150,9 +359,8 @@ def send_outlook_email(
         return
 
     if response.status_code == 401 and "InvalidAuthenticationToken" in response.text:
-        token = get_valid_access_token(mail_config, force_refresh=True)
-        headers["Authorization"] = f"Bearer {token}"
-        response = requests.post("https://graph.microsoft.com/v1.0/me/sendMail", headers=headers, json=message, timeout=60)
+        headers = _graph_headers(mail_config, force_refresh=True)
+        response = requests.post(f"{GRAPH_BASE_URL}/me/sendMail", headers=headers, json=message, timeout=60)
         if response.status_code in (200, 202):
             if logger:
                 logger.info("Email sent successfully after token refresh")
