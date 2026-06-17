@@ -73,7 +73,7 @@ async def _fill_otp_with_typing(
                 return hidden && hidden.value === expectedCode && button && !button.disabled;
             }
             """,
-            [hidden_code_selector, continue_button_selector, otp_code],
+            arg=[hidden_code_selector, continue_button_selector, otp_code],
             timeout=5000,
         )
         logger.info("NAS OTP entered using page typing behavior")
@@ -186,28 +186,37 @@ async def _find_otp_with_resend(
     login_submit_time: datetime,
     logger: logging.Logger,
 ) -> str:
-    first_wait_seconds = min(60, max(1, mail_config.otp_poll_timeout_seconds))
-    remaining_wait_seconds = max(1, mail_config.otp_poll_timeout_seconds - first_wait_seconds)
+    wait_seconds = 60
+    received_after = login_submit_time
+    attempt = 1
 
-    try:
-        return await asyncio.to_thread(
-            find_latest_nas_otp,
-            mail_config,
-            received_after=login_submit_time,
-            timeout_seconds=first_wait_seconds,
-            logger=logger,
-        )
-    except RuntimeError as exc:
-        logger.warning("NAS OTP not found within %s seconds; clicking resend. Error: %s", first_wait_seconds, exc)
+    while True:
+        try:
+            logger.info("Waiting for NAS OTP email. Attempt=%s TimeoutSeconds=%s", attempt, wait_seconds)
+            return await asyncio.to_thread(
+                find_latest_nas_otp,
+                mail_config,
+                received_after=received_after,
+                timeout_seconds=wait_seconds,
+                logger=logger,
+            )
+        except RuntimeError as exc:
+            logger.warning(
+                "NAS OTP not found on attempt %s. Resending OTP and retrying. Error: %s",
+                attempt,
+                exc,
+            )
 
-    resend_time = await _click_resend_otp(page, login_selectors, logger)
-    return await asyncio.to_thread(
-        find_latest_nas_otp,
-        mail_config,
-        received_after=resend_time,
-        timeout_seconds=remaining_wait_seconds,
-        logger=logger,
-    )
+        try:
+            received_after = await _click_resend_otp(page, login_selectors, logger)
+        except RuntimeError as exc:
+            logger.warning(
+                "NAS OTP resend was not available on attempt %s. Waiting another 60 seconds. Error: %s",
+                attempt,
+                exc,
+            )
+
+        attempt += 1
 
 
 async def _handle_mfa_if_present(
