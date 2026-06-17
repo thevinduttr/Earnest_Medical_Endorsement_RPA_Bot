@@ -67,15 +67,19 @@ async def _fill_otp_with_typing(
     try:
         await page.wait_for_function(
             """
-            ([hiddenSelector, buttonSelector, expectedCode]) => {
+            ([hiddenSelector, expectedCode]) => {
                 const hidden = document.querySelector(hiddenSelector);
-                const button = document.querySelector(buttonSelector);
-                return hidden && hidden.value === expectedCode && button && !button.disabled;
+                return hidden && hidden.value === expectedCode;
             }
             """,
-            arg=[hidden_code_selector, continue_button_selector, otp_code],
+            arg=[hidden_code_selector, otp_code],
             timeout=5000,
         )
+        continue_button = page.locator(continue_button_selector).first
+        await continue_button.wait_for(state="visible", timeout=5000)
+        if not await continue_button.is_enabled():
+            logger.warning("NAS OTP Continue button was still disabled after typing")
+            return False
         logger.info("NAS OTP entered using page typing behavior")
         return True
     except PlaywrightTimeoutError:
@@ -101,7 +105,7 @@ async def _fill_otp_with_dom_fallback(
 
     await page.evaluate(
         """
-        ([inputSelector, hiddenSelector, buttonSelector, code]) => {
+        ([inputSelector, hiddenSelector, code]) => {
             const dispatch = (el) => {
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -122,15 +126,17 @@ async def _fill_otp_with_dom_fallback(
                 hidden.value = code;
                 dispatch(hidden);
             }
-
-            const button = document.querySelector(buttonSelector);
-            if (button) {
-                button.removeAttribute('disabled');
-                button.disabled = false;
-            }
         }
         """,
-        [otp_inputs_selector, hidden_code_selector, continue_button_selector, otp_code],
+        [otp_inputs_selector, hidden_code_selector, otp_code],
+    )
+    await page.locator(continue_button_selector).first.evaluate(
+        """
+        (button) => {
+            button.removeAttribute('disabled');
+            button.disabled = false;
+        }
+        """
     )
     logger.info("NAS OTP entered using DOM fallback")
 
@@ -187,10 +193,11 @@ async def _find_otp_with_resend(
     logger: logging.Logger,
 ) -> str:
     wait_seconds = 60
+    max_attempts = 3
     received_after = login_submit_time
     attempt = 1
 
-    while True:
+    while attempt <= max_attempts:
         try:
             logger.info("Waiting for NAS OTP email. Attempt=%s TimeoutSeconds=%s", attempt, wait_seconds)
             return await asyncio.to_thread(
@@ -207,6 +214,9 @@ async def _find_otp_with_resend(
                 exc,
             )
 
+        if attempt >= max_attempts:
+            break
+
         try:
             received_after = await _click_resend_otp(page, login_selectors, logger)
         except RuntimeError as exc:
@@ -217,6 +227,11 @@ async def _find_otp_with_resend(
             )
 
         attempt += 1
+
+    raise RuntimeError(
+        "NAS OTP was not received after 3 attempts. "
+        "The NAS portal may not be sending OTP emails. Login stopped and failure notification will be sent."
+    )
 
 
 async def _handle_mfa_if_present(

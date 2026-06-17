@@ -10,6 +10,11 @@ from playwright.async_api import async_playwright
 from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
 from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
 from src.portals.nas.main_process.login import login
+from src.services.mail_service.outlook_mail_service import send_outlook_email
+from src.services.mail_service.sukoon_email_templates import (
+    build_unexpected_body,
+    build_unexpected_subject,
+)
 from src.portals.nas.main_process.new_button_page import open_new_member_page
 from src.portals.nas.main_process.request_dashboard_page import open_request_dashboard_page
 from src.services.db_service.nas.member_data_loader import (
@@ -17,6 +22,7 @@ from src.services.db_service.nas.member_data_loader import (
     load_process_selector,
 )
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
+from src.utils.mail_config import MailConfig
 
 
 DEFAULT_NAS_LOGIN_URL = (
@@ -110,6 +116,33 @@ def _merge_values(base_values: dict, override_values: dict) -> dict:
     return merged
 
 
+def _resolve_policy_number(process_values: dict) -> str:
+    for key in ("PolicyNumber", "policy_number", "company_name", "CompanyName"):
+        value = str(process_values.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def _build_mail_process_data(
+    *,
+    request_id: str | None,
+    policy_number: str,
+    action_type: str,
+    portal_name: str = "NAS",
+    status: str,
+    reference_number: str = "",
+) -> dict[str, str]:
+    return {
+        "RequestId": str(request_id or "").strip(),
+        "PolicyNumber": str(policy_number or "").strip(),
+        "ActionType": str(action_type or "").strip(),
+        "PortalName": str(portal_name or "").strip(),
+        "Status": str(status or "").strip(),
+        "ReferenceNumber": str(reference_number or "").strip(),
+    }
+
+
 def _read_bool_env(name: str) -> bool | None:
     value = os.getenv(name)
     if value is None:
@@ -121,6 +154,39 @@ def _read_bool_env(name: str) -> bool | None:
     if normalized in {"0", "false", "no", "n", "off"}:
         return False
     return None
+
+
+def _send_nas_error_email(
+    *,
+    process_data: dict[str, str],
+    error_message: str,
+    screenshot_paths: list[Path],
+    logger: logging.Logger,
+    retry_count: int = 3,
+) -> None:
+    try:
+        mail_config = MailConfig.load(Path("config/mail.ini"))
+        attachments = [path for path in screenshot_paths if path.exists()]
+        subject = build_unexpected_subject(
+            str(process_data.get("RequestId", "")).strip(),
+            str(process_data.get("PolicyNumber", "")).strip(),
+        )
+        body = build_unexpected_body(
+            process_data,
+            error_message,
+            attachments,
+            retry_count=retry_count,
+        )
+        send_outlook_email(
+            mail_config,
+            subject=subject,
+            body=body,
+            attachments=attachments or None,
+            logger=logger,
+        )
+        logger.info("Sent NAS failure email notification")
+    except Exception as error:
+        logger.error(f"Failed to send NAS failure email notification: {error}")
 
 
 def _should_pause_after_login(browser_config: dict) -> bool:
@@ -326,13 +392,27 @@ async def run(
 
         except Exception as exc:
             logger.error(f"NAS login flow failed: {exc}")
+            error_shots = []
             if page is not None:
                 try:
                     error_shot = run_dir / "nas_login_error.png"
                     await page.screenshot(path=str(error_shot), full_page=True)
                     logger.info(f"Saved NAS login error screenshot: {error_shot}")
+                    error_shots.append(error_shot)
                 except Exception as shot_exc:
                     logger.error(f"Failed to save NAS login error screenshot: {shot_exc}")
+            failure_process_data = _build_mail_process_data(
+                request_id=request_id,
+                policy_number=_resolve_policy_number(add_member_values),
+                action_type=action_type,
+                status="Network or Loading Issue",
+            )
+            _send_nas_error_email(
+                process_data=failure_process_data,
+                error_message=str(exc),
+                screenshot_paths=error_shots,
+                logger=logger,
+            )
             raise
         finally:
             if context is not None:
