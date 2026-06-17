@@ -38,10 +38,49 @@ jobs:
       - name: Deploy over SSH
         shell: powershell
         run: |
+          $ErrorActionPreference = "Stop"
+
           mkdir $env:USERPROFILE\.ssh -Force
 
+          Write-Host "Writing SSH private key..."
           "${{ secrets.VM_SSH_KEY }}" | Out-File -FilePath $env:USERPROFILE\.ssh\id_ed25519 -Encoding ascii
           icacls $env:USERPROFILE\.ssh\id_ed25519 /inheritance:r
           icacls $env:USERPROFILE\.ssh\id_ed25519 /grant:r "$($env:USERNAME):F"
 
-          ssh -o StrictHostKeyChecking=no -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -ExecutionPolicy Bypass -Command `"cd C:\Users\opc\Desktop\Portal_System; git pull origin dev; if (!(Test-Path .\venv\Scripts\python.exe)) { python -m venv venv }; .\venv\Scripts\python.exe -m pip install --upgrade pip; .\venv\Scripts\python.exe -m pip install -r requirements.txt; .\venv\Scripts\python.exe -m compileall main.py src tests; schtasks /End /TN MedicalEndorsementBot 2>`$null; schtasks /Run /TN MedicalEndorsementBot`""
+          Write-Host "Testing SSH connection..."
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "echo SSH connection successful"
+
+          Write-Host "Starting remote deployment..."
+          $remoteScript = @'
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "[$(Get-Date -Format o)] Changing to project directory..."
+          cd C:\Users\opc\Desktop\Portal_System
+
+          Write-Host "[$(Get-Date -Format o)] Pulling latest code from dev..."
+          git pull origin dev
+
+          Write-Host "[$(Get-Date -Format o)] Checking virtual environment..."
+          if (!(Test-Path .\venv\Scripts\python.exe)) {
+            Write-Host "Virtual environment not found. Creating venv..."
+            python -m venv venv
+          }
+
+          Write-Host "[$(Get-Date -Format o)] Upgrading pip..."
+          .\venv\Scripts\python.exe -m pip install --upgrade pip
+
+          Write-Host "[$(Get-Date -Format o)] Installing requirements..."
+          .\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+          Write-Host "[$(Get-Date -Format o)] Compiling Python files..."
+          .\venv\Scripts\python.exe -m compileall main.py src tests
+
+          Write-Host "[$(Get-Date -Format o)] Restarting scheduled task..."
+          schtasks /End /TN MedicalEndorsementBot 2>$null
+          schtasks /Run /TN MedicalEndorsementBot
+
+          Write-Host "[$(Get-Date -Format o)] Deployment completed."
+          '@
+
+          $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($remoteScript))
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedScript"
