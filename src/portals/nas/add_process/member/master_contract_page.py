@@ -102,3 +102,5 @@ async def select_company_accordion(
         pass
 
     logger.info(f"NAS policy selected for ContractName: {contract_name}")
+
+    

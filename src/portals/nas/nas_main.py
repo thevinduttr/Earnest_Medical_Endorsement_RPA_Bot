@@ -339,3 +339,4 @@ async def run(
                 await context.close()
             if browser is not None:
                 await browser.close()
+

@@ -36,3 +36,4 @@ async def open_new_member_page(
     )
 
     logger.info("NAS new button page completed")
+

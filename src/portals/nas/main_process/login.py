@@ -62,3 +62,4 @@ async def login(
         raise RuntimeError("NAS login confirmation timed out") from exc
 
     logger.info("NAS login form is no longer visible")
+
