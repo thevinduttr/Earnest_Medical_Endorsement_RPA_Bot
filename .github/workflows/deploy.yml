@@ -146,8 +146,18 @@ jobs:
           Write-Host "[$(Get-Date -Format o)] Deployment completed."
           '@
 
-          $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($remoteScript))
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -NoProfile -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $encodedScript"
+          $localScriptPath = Join-Path $env:RUNNER_TEMP "deploy.ps1"
+          $remoteScriptPath = "C:\Users\${{ secrets.VM_USER }}\AppData\Local\Temp\deploy.ps1"
+          $remoteTarget = "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}"
+
+          Write-Host "Uploading deployment script..."
+          $remoteScript | Out-File -FilePath $localScriptPath -Encoding utf8
+          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 $localScriptPath "${remoteTarget}:$remoteScriptPath"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload deployment script with exit code $LASTEXITCODE."
+          }
+
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 $remoteTarget "powershell -NoProfile -ExecutionPolicy Bypass -File `"$remoteScriptPath`""
           if ($LASTEXITCODE -ne 0) {
             throw "Remote deployment failed with exit code $LASTEXITCODE."
           }
