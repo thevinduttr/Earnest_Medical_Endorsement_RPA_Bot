@@ -47,6 +47,12 @@ jobs:
           icacls $env:USERPROFILE\.ssh\id_ed25519 /inheritance:r
           icacls $env:USERPROFILE\.ssh\id_ed25519 /grant:r "$($env:USERNAME):F"
 
+          Write-Host "Public key generated from VM_SSH_KEY secret:"
+          ssh-keygen -y -f $env:USERPROFILE\.ssh\id_ed25519
+          if ($LASTEXITCODE -ne 0) {
+            throw "The VM_SSH_KEY secret is not a valid private key."
+          }
+
           Write-Host "Testing SSH connection..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "echo SSH connection successful"
           if ($LASTEXITCODE -ne 0) {
@@ -90,5 +96,4 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Remote deployment failed with exit code $LASTEXITCODE."
           }
-
 
