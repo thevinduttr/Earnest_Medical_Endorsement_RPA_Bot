@@ -66,8 +66,25 @@ jobs:
           Write-Host "[$(Get-Date -Format o)] Changing to project directory..."
           cd C:\Users\opc\Desktop\Portal_System
 
+          $git = Get-Command git.exe -ErrorAction SilentlyContinue
+          if (!$git) {
+            $gitPaths = @(
+              "${env:ProgramFiles}\Git\cmd\git.exe",
+              "${env:ProgramFiles}\Git\bin\git.exe",
+              "${env:ProgramFiles(x86)}\Git\cmd\git.exe",
+              "${env:ProgramFiles(x86)}\Git\bin\git.exe"
+            )
+            $git = $gitPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          } else {
+            $git = $git.Source
+          }
+          if (!$git) {
+            throw "git.exe was not found on the VM. Install Git for Windows or add git.exe to PATH for SSH sessions."
+          }
+          Write-Host "Using Git at: $git"
+
           Write-Host "[$(Get-Date -Format o)] Pulling latest code from dev..."
-          git pull origin dev
+          & $git pull origin dev
 
           Write-Host "[$(Get-Date -Format o)] Checking virtual environment..."
           if (!(Test-Path .\venv\Scripts\python.exe)) {
@@ -92,9 +109,8 @@ jobs:
           '@
 
           $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($remoteScript))
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedScript"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $env:USERPROFILE\.ssh\id_ed25519 ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "powershell -NoProfile -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $encodedScript"
           if ($LASTEXITCODE -ne 0) {
             throw "Remote deployment failed with exit code $LASTEXITCODE."
           }
-
 
