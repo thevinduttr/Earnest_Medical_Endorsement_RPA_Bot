@@ -7,6 +7,7 @@ import os
 
 from playwright.async_api import async_playwright
 
+from src.portals.nas.add_process.bulk_member.bulk_add_member import run_bulk_add_member
 from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
 from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
 from src.portals.nas.main_process.login import login
@@ -23,6 +24,7 @@ from src.services.db_service.nas.member_data_loader import (
 )
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
 from src.utils.mail_config import MailConfig
+from src.utils.upload_file_paths import get_upload_paths
 
 
 DEFAULT_NAS_LOGIN_URL = (
@@ -236,6 +238,10 @@ async def run(
         "locators/nas/main/accordion_page.yml",
         section="accordion_page",
     )
+    bulk_add_member_selectors = load_section_from_yaml(
+        "locators/nas/add_process/bulk_add_member.yml",
+        section="bulk_add_member",
+    )
     login_values = load_json_file("config/json_values/nas_login.json")
     add_member_values = load_json_file("config/json_values/nas_add_member.json")
     login_values["username"] = os.getenv("NAS_USERNAME", login_values.get("username", ""))
@@ -270,6 +276,13 @@ async def run(
             "NAS database row loaded | "
             f"RequestId={db_result.request_id} | ActionType={action_type} | ProcessKey={process_key}"
         )
+
+    if process_key == "add_batch":
+        upload_paths = get_upload_paths("NAS", request_type, action_type)
+        add_member_values = _merge_values(add_member_values, upload_paths)
+        env_bulk_file = str(os.getenv("NAS_BULK_MEMBER_FILE") or "").strip()
+        if env_bulk_file:
+            add_member_values["batch_member_file"] = env_bulk_file
 
     paths_config = config.get("paths", {}) if isinstance(config, dict) else {}
     nas_login_url = str(paths_config.get("nas_login_url") or DEFAULT_NAS_LOGIN_URL).strip()
@@ -353,10 +366,6 @@ async def run(
                 logger=logger,
             )
 
-            success_shot = run_dir / "nas_login_success.png"
-            await page.screenshot(path=str(success_shot), full_page=True)
-            logger.info(f"Saved NAS login success screenshot: {success_shot}")
-
             await _pause_after_login_if_enabled(page, pause_after_login, logger)
 
             await open_new_member_page(
@@ -385,10 +394,13 @@ async def run(
                     values=add_member_values,
                     logger=logger,
                 )
-
-            add_member_shot = run_dir / "nas_add_member_accordion_selected.png"
-            await page.screenshot(path=str(add_member_shot), full_page=True)
-            logger.info(f"Saved NAS add member screenshot: {add_member_shot}")
+            elif process_key == "add_batch":
+                await run_bulk_add_member(
+                    page=page,
+                    selectors=bulk_add_member_selectors,
+                    values=add_member_values,
+                    logger=logger,
+                )
 
         except Exception as exc:
             logger.error(f"NAS login flow failed: {exc}")
