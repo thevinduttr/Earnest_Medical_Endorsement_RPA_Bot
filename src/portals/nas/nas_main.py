@@ -320,6 +320,7 @@ async def run(
     browser = None
     async with async_playwright() as playwright:
         context = None
+        trace_started = False
         try:
             if persistent_context:
                 user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -355,6 +356,14 @@ async def run(
                 else:
                     raise ValueError(f"Unsupported browser engine: {browser_engine}")
                 context = await browser.new_context(viewport={"width": width, "height": height})
+
+            await context.tracing.start(
+                screenshots=True,
+                snapshots=True,
+                sources=True,
+            )
+            trace_started = True
+            logger.info("NAS Playwright tracing started")
 
             page = await context.new_page()
             await page.goto(nas_login_url, wait_until="domcontentloaded")
@@ -427,6 +436,13 @@ async def run(
             )
             raise
         finally:
+            if context is not None and trace_started:
+                trace_path = run_dir / "nas_playwright_trace.zip"
+                try:
+                    await context.tracing.stop(path=str(trace_path))
+                    logger.info(f"Saved NAS Playwright trace: {trace_path}")
+                except Exception as trace_exc:
+                    logger.error(f"Failed to save NAS Playwright trace: {trace_exc}")
             if context is not None:
                 await context.close()
             if browser is not None:

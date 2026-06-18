@@ -1292,6 +1292,7 @@ async def _run_once(
 	# Step 05: Launch browser and execute the selected Sukoon process.
 	async with async_playwright() as playwright:
 		context = None
+		trace_started = False
 
 		if runtime_engine == "chromium":
 			browser = await playwright.chromium.launch(
@@ -1306,6 +1307,13 @@ async def _run_once(
 			raise ValueError(f"Unsupported browser engine: {browser_engine}")
 
 		context = await browser.new_context(viewport={"width": width, "height": height})
+		await context.tracing.start(
+			screenshots=True,
+			snapshots=True,
+			sources=True,
+		)
+		trace_started = True
+		logger.info("Sukoon Playwright tracing started")
 		page = await context.new_page()
 
 		try:
@@ -1537,6 +1545,13 @@ async def _run_once(
 				screenshot_path=error_shot,
 			) from exc
 		finally:
+			if context is not None and trace_started:
+				trace_path = run_dir / "sukoon_playwright_trace.zip"
+				try:
+					await context.tracing.stop(path=str(trace_path))
+					logger.info(f"Saved Sukoon Playwright trace: {trace_path}")
+				except Exception as trace_exc:
+					logger.error(f"Failed to save Sukoon Playwright trace: {trace_exc}")
 			if context is not None:
 				await context.close()
 			if browser is not None:
