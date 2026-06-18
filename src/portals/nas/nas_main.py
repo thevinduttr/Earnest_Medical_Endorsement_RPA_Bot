@@ -26,6 +26,12 @@ from src.services.db_service.nas.member_data_loader import (
     load_member_process_values,
     load_process_selector,
 )
+from src.services.census_service.nas.addition_census import (
+    build_nas_addition_census_file,
+)
+from src.services.census_service.nas.deletion_census import (
+    build_nas_deletion_census_file,
+)
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
 from src.utils.mail_config import MailConfig
 from src.utils.upload_file_paths import get_upload_paths
@@ -281,33 +287,71 @@ async def run(
             f"RequestId={db_result.request_id} | ActionType={action_type} | ProcessKey={process_key}"
         )
 
-    if process_key == "add_batch":
+    if process_key in {"add_batch", "delete_batch", "delete_bulk"}:
         upload_paths = get_upload_paths("NAS", request_type, action_type)
-        add_member_values = _merge_values(add_member_values, upload_paths)
-        env_bulk_file = str(os.getenv("NAS_BULK_MEMBER_FILE") or "").strip()
-        if env_bulk_file:
-            add_member_values["batch_member_file"] = env_bulk_file
+        if not upload_paths:
+            raise ValueError(
+                f"NAS upload path mapping is missing for {request_type} {action_type}"
+            )
 
-        source_email_filename = None
-        if request_id:
-            source_email_filename = load_latest_request_email_filename(
-                request_id=str(request_id),
+        if process_key == "add_batch":
+            env_bulk_file = str(os.getenv("NAS_BULK_MEMBER_FILE") or "").strip()
+            if env_bulk_file:
+                upload_paths["batch_member_file"] = env_bulk_file
+                logger.info("Using NAS_BULK_MEMBER_FILE override: %s", env_bulk_file)
+            elif use_database:
+                result = build_nas_addition_census_file(
+                    request_id=str(request_id or ""),
+                    output_path=upload_paths["batch_member_file"],
+                    include_user_ids=request_user_ids or None,
+                    logger=logger,
+                )
+                logger.info(
+                    "NAS addition census ready before portal start | "
+                    "Template=%s | Members=%s | Output=%s",
+                    result.template_path,
+                    result.members_count,
+                    result.output_path,
+                )
+
+            add_member_values = _merge_values(add_member_values, upload_paths)
+
+            source_email_filename = None
+            if request_id:
+                source_email_filename = load_latest_request_email_filename(
+                    request_id=str(request_id),
+                    logger=logger,
+                )
+            resolved_payer_name = resolve_payer_name_from_email_filename(
+                source_email_filename
+            )
+            if resolved_payer_name:
+                add_member_values["resolved_payer_name"] = resolved_payer_name
+                logger.info(
+                    "NAS bulk payer resolved from source email | RequestId=%s | Payer=%s",
+                    request_id,
+                    resolved_payer_name,
+                )
+            else:
+                logger.warning(
+                    "NAS bulk payer could not be resolved from source email; "
+                    "using configured payer | RequestId=%s | FileName=%s",
+                    request_id,
+                    source_email_filename or "-",
+                )
+        elif use_database:
+            result = build_nas_deletion_census_file(
+                request_id=str(request_id or ""),
+                output_path=upload_paths["batch_delete_member_file"],
+                include_user_ids=request_user_ids or None,
                 logger=logger,
             )
-        resolved_payer_name = resolve_payer_name_from_email_filename(source_email_filename)
-        if resolved_payer_name:
-            add_member_values["resolved_payer_name"] = resolved_payer_name
             logger.info(
-                "NAS bulk payer resolved from source email | RequestId=%s | Payer=%s",
-                request_id,
-                resolved_payer_name,
-            )
-        else:
-            logger.warning(
-                "NAS bulk payer could not be resolved from source email; using configured payer | "
-                "RequestId=%s | FileName=%s",
-                request_id,
-                source_email_filename or "-",
+                "NAS deletion census ready before portal start | "
+                "Template=%s | Members=%s | Output=%s",
+                result.template_path,
+                result.members_count,
+                result.output_path,
             )
 
     paths_config = config.get("paths", {}) if isinstance(config, dict) else {}

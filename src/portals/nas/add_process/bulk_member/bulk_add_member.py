@@ -12,6 +12,9 @@ from src.portals.nas.add_process.member.master_contract_page import (
     DEFAULT_ACCORDION_TEXT,
     _normalize_text,
 )
+from src.services.census_service.nas.common import (
+    normalize_contract_name as normalize_bulk_contract_name,
+)
 from src.utils.support_functions import ensure_selector_present
 
 
@@ -19,11 +22,6 @@ PAYER_NAMES = {
     "LIVA": "Liva Insurance B.S.C. (C) - LIVA - Nas",
     "QIC": "Qatar Insurance Company - QIC - NAS",
 }
-
-
-def normalize_bulk_contract_name(value: Any) -> str:
-    text = _normalize_text(value)
-    return re.sub(r"^(?:(?:FW|FWD|RE)\s*:\s*)+", "", text, flags=re.IGNORECASE).strip()
 
 
 def resolve_payer_name_from_email_filename(filename: str | None) -> str | None:

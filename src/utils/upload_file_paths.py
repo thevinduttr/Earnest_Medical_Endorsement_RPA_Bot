@@ -73,6 +73,16 @@ def _build_file_map(base_dir: Path) -> Dict[ProcessKey, Dict[str, str]]:
                 (base_dir / "nas" / "add" / "batch" / "member_addition.xlsx").resolve()
             ),
         },
+        ("NAS", "DELETE", "BATCH"): {
+            "batch_delete_member_file": str(
+                (base_dir / "nas" / "delete" / "batch" / "member_deletion.xlsx").resolve()
+            ),
+        },
+        ("NAS", "DELETE", "BULK"): {
+            "batch_delete_member_file": str(
+                (base_dir / "nas" / "delete" / "bulk" / "member_deletion_bulk.xlsx").resolve()
+            ),
+        },
     }
 
 
