@@ -8,6 +8,9 @@ import os
 from playwright.async_api import async_playwright
 
 from src.portals.nas.add_process.bulk_member.bulk_add_member import run_bulk_add_member
+from src.portals.nas.add_process.bulk_member.bulk_add_member import (
+    resolve_payer_name_from_email_filename,
+)
 from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
 from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
 from src.portals.nas.main_process.login import login
@@ -19,6 +22,7 @@ from src.services.mail_service.sukoon_email_templates import (
 from src.portals.nas.main_process.new_button_page import open_new_member_page
 from src.portals.nas.main_process.request_dashboard_page import open_request_dashboard_page
 from src.services.db_service.nas.member_data_loader import (
+    load_latest_request_email_filename,
     load_member_process_values,
     load_process_selector,
 )
@@ -283,6 +287,28 @@ async def run(
         env_bulk_file = str(os.getenv("NAS_BULK_MEMBER_FILE") or "").strip()
         if env_bulk_file:
             add_member_values["batch_member_file"] = env_bulk_file
+
+        source_email_filename = None
+        if request_id:
+            source_email_filename = load_latest_request_email_filename(
+                request_id=str(request_id),
+                logger=logger,
+            )
+        resolved_payer_name = resolve_payer_name_from_email_filename(source_email_filename)
+        if resolved_payer_name:
+            add_member_values["resolved_payer_name"] = resolved_payer_name
+            logger.info(
+                "NAS bulk payer resolved from source email | RequestId=%s | Payer=%s",
+                request_id,
+                resolved_payer_name,
+            )
+        else:
+            logger.warning(
+                "NAS bulk payer could not be resolved from source email; using configured payer | "
+                "RequestId=%s | FileName=%s",
+                request_id,
+                source_email_filename or "-",
+            )
 
     paths_config = config.get("paths", {}) if isinstance(config, dict) else {}
     nas_login_url = str(paths_config.get("nas_login_url") or DEFAULT_NAS_LOGIN_URL).strip()

@@ -9,6 +9,7 @@ from src.services.db_service.azure_db_connection import AzureSQLConnection
 
 
 TABLE_NAME = "[dbo].[EndorsementRequestsMemberData]"
+EMAIL_TABLE_NAME = "[dbo].[EndorsementEmail]"
 
 PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
     "add_individual": {
@@ -76,6 +77,50 @@ class MemberProcessValues:
     request_id: str
     process_values: Dict[str, str]
     source_row: Dict[str, Any]
+
+
+def load_latest_request_email_filename(
+    request_id: str,
+    logger=None,
+) -> Optional[str]:
+    request_id_text = str(request_id or "").strip()
+    if not request_id_text:
+        raise ValueError("request_id is required to load NAS email metadata")
+
+    query = f"""
+SELECT TOP (1) FileName
+FROM {EMAIL_TABLE_NAME}
+WHERE RequestId = ?
+  AND ISNULL(IsDeleted, 0) = 0
+  AND NULLIF(LTRIM(RTRIM(FileName)), '') IS NOT NULL
+ORDER BY UploadedAt DESC, EmailId DESC
+"""
+
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(query, [request_id_text])
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+
+    if row is None:
+        if logger:
+            logger.warning(
+                "No EndorsementEmail filename found for NAS request | RequestId=%s",
+                request_id_text,
+            )
+        return None
+
+    filename = _normalize_text_value(row[0])
+    if logger:
+        logger.info(
+            "NAS source email filename loaded | RequestId=%s | FileName=%s",
+            request_id_text,
+            filename or "-",
+        )
+    return filename
 
 
 def _normalize_upper(value: Any) -> str:

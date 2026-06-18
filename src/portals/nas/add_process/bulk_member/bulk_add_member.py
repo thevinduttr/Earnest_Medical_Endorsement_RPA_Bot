@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import re
 from typing import Any, Dict
 
 from playwright.async_api import Locator, Page, TimeoutError as PlaywrightTimeoutError
@@ -12,6 +13,30 @@ from src.portals.nas.add_process.member.master_contract_page import (
     _normalize_text,
 )
 from src.utils.support_functions import ensure_selector_present
+
+
+PAYER_NAMES = {
+    "LIVA": "Liva Insurance B.S.C. (C) - LIVA - Nas",
+    "QIC": "Qatar Insurance Company - QIC - NAS",
+}
+
+
+def normalize_bulk_contract_name(value: Any) -> str:
+    text = _normalize_text(value)
+    return re.sub(r"^(?:(?:FW|FWD|RE)\s*:\s*)+", "", text, flags=re.IGNORECASE).strip()
+
+
+def resolve_payer_name_from_email_filename(filename: str | None) -> str | None:
+    searchable = re.sub(r"[^A-Z0-9]+", " ", str(filename or "").upper())
+    codes = {code for code in PAYER_NAMES if re.search(rf"\b{re.escape(code)}\b", searchable)}
+    if len(codes) == 1:
+        return PAYER_NAMES[codes.pop()]
+    return None
+
+
+def _canonical_contract_text(value: Any) -> str:
+    normalized = normalize_bulk_contract_name(value).upper()
+    return " ".join(re.sub(r"[^A-Z0-9]+", " ", normalized).split())
 
 
 async def _wait_after_click(page: Page, timeout_ms: int = 15000) -> None:
@@ -41,9 +66,22 @@ async def _select_bulk_policy(
     logger: logging.Logger,
 ) -> None:
     payer_selector = ensure_selector_present(selectors, "payer_accordion", logger)
-    payer_name = _normalize_text(values.get("accordion_text")) or DEFAULT_ACCORDION_TEXT
-    payer = page.locator(payer_selector).filter(has_text=payer_name).first
-    await payer.wait_for(state="visible", timeout=60000)
+    payer_name = (
+        _normalize_text(values.get("resolved_payer_name"))
+        or _normalize_text(values.get("accordion_text"))
+        or DEFAULT_ACCORDION_TEXT
+    )
+    payer = None
+    payer_candidates = page.locator(payer_selector)
+    await payer_candidates.first.wait_for(state="visible", timeout=60000)
+    for index in range(await payer_candidates.count()):
+        candidate = payer_candidates.nth(index)
+        if _normalize_text(await candidate.inner_text()).casefold() == payer_name.casefold():
+            payer = candidate
+            break
+    if payer is None:
+        raise RuntimeError(f"NAS bulk payer accordion not found: {payer_name}")
+
     await payer.click()
     await _wait_after_click(page)
     logger.info("NAS bulk payer selected: %s", payer_name)
@@ -62,7 +100,15 @@ async def _select_bulk_policy(
     card_selector = ensure_selector_present(selectors, "policy_card", logger)
     contract_link_selector = ensure_selector_present(selectors, "policy_contract_link", logger)
     upload_button_selector = ensure_selector_present(selectors, "upload_members_button", logger)
-    contract_name = _normalize_text(values.get("contract_name"))
+    raw_contract_name = _normalize_text(values.get("contract_name"))
+    contract_name = normalize_bulk_contract_name(raw_contract_name)
+    canonical_contract_name = _canonical_contract_text(contract_name)
+    if raw_contract_name != contract_name:
+        logger.info(
+            "NAS bulk contract name normalized | Raw=%s | MatchValue=%s",
+            raw_contract_name,
+            contract_name,
+        )
 
     cards = page.locator(card_selector)
     await cards.first.wait_for(state="visible", timeout=60000)
@@ -79,7 +125,9 @@ async def _select_bulk_policy(
                 _normalize_text(text)
                 for text in await card.locator(contract_link_selector).all_inner_texts()
             ]
-            if contract_name not in card_text and contract_name not in link_texts:
+            candidate_texts = [_canonical_contract_text(card_text)]
+            candidate_texts.extend(_canonical_contract_text(text) for text in link_texts)
+            if not any(canonical_contract_name in candidate for candidate in candidate_texts):
                 continue
 
         matched_cards.append((len(card_text), upload_button))
