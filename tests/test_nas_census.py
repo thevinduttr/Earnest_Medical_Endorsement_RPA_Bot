@@ -145,19 +145,35 @@ class NasCensusWorkbookTests(unittest.TestCase):
         records = pd.DataFrame(
             [
                 {
+                    "UserId": "U1",
                     "ContractName": "Fw: Contract One",
                     "FirstName": "First",
                     "LastName": "Member",
                     "EffectiveDate": date(2026, 6, 18),
                     "DateOfBirth": date(1990, 1, 2),
+                    "Gender": "Male",
+                    "MaritalStatus": "Single",
+                    "Category": "CAT A",
+                    "Relation": "Principal",
+                    "Nationality": "Sri Lanka",
+                    "EmiratesId": "784-1",
+                    "Email": "first@example.com",
                     "Commission": "No",
                 },
                 {
+                    "UserId": "U2",
                     "ContractName": "Contract Two",
                     "FirstName": "Second",
                     "LastName": "Member",
                     "EffectiveDate": date(2026, 6, 19),
                     "DateOfBirth": date(1991, 2, 3),
+                    "Gender": "Female",
+                    "MaritalStatus": "Married",
+                    "Category": "CAT B",
+                    "Relation": "Principal",
+                    "Nationality": "Sri Lanka",
+                    "EmiratesId": "784-2",
+                    "Email": "second@example.com",
                     "Commission": "Yes",
                 },
             ]
@@ -199,6 +215,38 @@ class NasCensusWorkbookTests(unittest.TestCase):
             self.assertEqual("2026-06-18", worksheet["H2"].value)
             template.close()
             generated.close()
+
+    def test_addition_workbook_rejects_missing_red_header_values(self) -> None:
+        records = pd.DataFrame(
+            [
+                {
+                    "UserId": "U1",
+                    "ContractName": "Contract One",
+                    "FirstName": "First",
+                    "LastName": "Member",
+                    "EffectiveDate": date(2026, 6, 18),
+                    "Relation": "Employee",
+                }
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "member_addition.xlsx"
+            with patch(
+                "src.services.census_service.nas.common.load_request_members_dataframe",
+                return_value=records,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"UserId U1: DOB, Gender, Marital Status, Category, Nationality, Emirates Id, Email",
+                ):
+                    build_nas_addition_census_file(
+                        request_id="REQ-MISSING",
+                        output_path=output_path,
+                        include_user_ids=["U1"],
+                    )
+
+            self.assertFalse(output_path.exists())
 
     def test_deletion_workbook_writes_general_date_text(self) -> None:
         records = pd.DataFrame(

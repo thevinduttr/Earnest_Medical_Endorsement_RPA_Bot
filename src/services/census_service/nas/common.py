@@ -30,6 +30,7 @@ _EXT_LIST_PATTERN = re.compile(
     br"<(?:\w+:)?extLst\b.*?</(?:\w+:)?extLst>",
     flags=re.DOTALL,
 )
+_RED_HEADER_RGB_VALUES = {"FF0000", "FFFF0000"}
 
 
 def normalize_scalar(value: Any) -> str:
@@ -143,6 +144,24 @@ def _restore_template_extensions(
     if template_root is None or template_extensions is None:
         return
 
+    # The NAS template root uses an x:worksheet prefix, while openpyxl writes
+    # unprefixed worksheet children. Preserve the template namespace declarations
+    # and attributes, but make the spreadsheet namespace the default namespace so
+    # the generated child elements and closing tag remain valid XML.
+    normalized_template_root = template_root.group(0)
+    normalized_template_root = re.sub(
+        br"^<\w+:worksheet\b",
+        b"<worksheet",
+        normalized_template_root,
+        count=1,
+    )
+    if b'xmlns="' + _WORKBOOK_NS.encode("ascii") + b'"' not in normalized_template_root:
+        normalized_template_root = normalized_template_root.replace(
+            b"<worksheet",
+            b'<worksheet xmlns="' + _WORKBOOK_NS.encode("ascii") + b'"',
+            1,
+        )
+
     temporary_zip = generated_path.with_name(
         f"{generated_path.stem}.{uuid4().hex}.restore{generated_path.suffix}"
     )
@@ -161,7 +180,7 @@ def _restore_template_extensions(
                     )
                 content = (
                     content[: generated_root.start()]
-                    + template_root.group(0)
+                    + normalized_template_root
                     + content[generated_root.end() :]
                 )
                 content = _EXT_LIST_PATTERN.sub(b"", content)
@@ -179,6 +198,46 @@ def _restore_template_extensions(
             destination_archive.writestr(item, content)
 
     os.replace(temporary_zip, generated_path)
+
+
+def _is_red_mandatory_header(cell) -> bool:
+    fill = cell.fill
+    if fill.fill_type != "solid":
+        return False
+    color = fill.fgColor
+    return color.type == "rgb" and str(color.rgb or "").upper() in _RED_HEADER_RGB_VALUES
+
+
+def _validate_mandatory_values(
+    *,
+    records: list[Dict[str, Any]],
+    worksheet,
+    header_by_column: Dict[int, str],
+    value_mapper: ValueMapper,
+) -> None:
+    mandatory_columns = {
+        column_index: header
+        for column_index, header in header_by_column.items()
+        if _is_red_mandatory_header(worksheet.cell(row=1, column=column_index))
+    }
+    if not mandatory_columns:
+        return
+
+    errors = []
+    for member_index, row in enumerate(records, start=1):
+        missing_headers = [
+            str(worksheet.cell(row=1, column=column_index).value).strip()
+            for column_index, header in mandatory_columns.items()
+            if not normalize_scalar(value_mapper(row, header, member_index))
+        ]
+        if missing_headers:
+            user_id = normalize_scalar(row.get("UserId")) or str(member_index)
+            errors.append(f"UserId {user_id}: {', '.join(missing_headers)}")
+
+    if errors:
+        raise ValueError(
+            "NAS census mandatory fields are missing: " + "; ".join(errors)
+        )
 
 
 def fill_nas_census_template(
@@ -233,6 +292,13 @@ def fill_nas_census_template(
             worksheet.cell(row=row_index, column=column_index).value = None
 
     records = members_df.to_dict(orient="records")
+    _validate_mandatory_values(
+        records=records,
+        worksheet=worksheet,
+        header_by_column=header_by_column,
+        value_mapper=value_mapper,
+    )
+
     for member_index, row in enumerate(records, start=1):
         excel_row = member_index + 1
         for column_index, header in header_by_column.items():
