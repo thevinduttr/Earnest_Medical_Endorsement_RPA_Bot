@@ -66,6 +66,13 @@ def _member_name(row: dict[str, Any]) -> str:
     )
 
 
+def _user_id_sort_key(value: Any) -> tuple[int, int | str]:
+    text = _text(value)
+    if text.isdigit():
+        return (0, int(text))
+    return (1, text.casefold())
+
+
 def prepare_nas_member_documents(
     *,
     request_id: str,
@@ -86,6 +93,7 @@ def prepare_nas_member_documents(
         logger=logger,
     )
     member_rows = members_frame.to_dict(orient="records")
+    member_rows.sort(key=lambda row: _user_id_sort_key(row.get("UserId")))
     ordered_user_ids = [
         _text(row.get("UserId"))
         for row in member_rows

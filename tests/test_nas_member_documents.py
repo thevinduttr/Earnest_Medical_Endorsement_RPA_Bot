@@ -91,20 +91,20 @@ class NasMemberDocumentTests(unittest.TestCase):
                     logger=logging.getLogger("test_nas_member_documents"),
                 )
 
-            self.assertEqual(["U2", "U1"], result.ordered_user_ids)
+            self.assertEqual(["U1", "U2"], result.ordered_user_ids)
             self.assertEqual(
-                ["Second Member", "First Member"],
+                ["First Member", "Second Member"],
                 result.ordered_member_names,
             )
             manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual("U2", manifest["members"][0]["user_id"])
-            self.assertEqual("Second Member", manifest["members"][0]["member_name"])
+            self.assertEqual("U1", manifest["members"][0]["user_id"])
+            self.assertEqual("First Member", manifest["members"][0]["member_name"])
             self.assertEqual(
-                "passport_copy",
+                "national_id_copy",
                 manifest["members"][0]["documents"][0]["nas_field"],
             )
             self.assertEqual(
-                "national_id_copy",
+                "passport_copy",
                 manifest["members"][1]["documents"][0]["nas_field"],
             )
 
