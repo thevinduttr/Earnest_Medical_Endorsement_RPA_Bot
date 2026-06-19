@@ -419,6 +419,14 @@ async def run(
                     "Using NAS_BULK_POLICY_FILTER override: %s",
                     env_policy_filter,
                 )
+
+            skip_member_submit = _read_bool_env("NAS_BULK_SKIP_MEMBER_SUBMIT")
+            if skip_member_submit is not None:
+                add_member_values["skip_member_submit"] = skip_member_submit
+                logger.warning(
+                    "NAS bulk member submit testing override enabled: %s",
+                    skip_member_submit,
+                )
         elif use_database:
             result = build_nas_deletion_census_file(
                 request_id=str(request_id or ""),

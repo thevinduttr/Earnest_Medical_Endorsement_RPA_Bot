@@ -262,6 +262,7 @@ async def _submit_member_timeline(
     member_id: str,
     member_name: str,
     logger: logging.Logger,
+    skip_submit: bool = False,
     max_steps: int = 12,
 ) -> None:
     next_selector = ensure_selector_present(selectors, "timeline_next_button", logger)
@@ -276,6 +277,15 @@ async def _submit_member_timeline(
     for step_number in range(1, max_steps + 1):
         submit_button = await _first_visible_enabled(page.locator(submit_selector))
         if submit_button is not None:
+            if skip_submit:
+                logger.warning(
+                    "NAS bulk member reached Submit but click was skipped for testing: "
+                    "%s | TimelineSteps=%s",
+                    member_name,
+                    step_number - 1,
+                )
+                return
+
             await submit_button.click()
             await _wait_after_click(page, timeout_ms=30000)
             logger.info(
@@ -310,6 +320,7 @@ async def _submit_all_imported_members(
     page: Page,
     selectors: Dict[str, Any],
     logger: logging.Logger,
+    skip_submit: bool = False,
 ) -> int:
     member_links_selector = ensure_selector_present(selectors, "member_links", logger)
     member_links = page.locator(member_links_selector)
@@ -334,9 +345,16 @@ async def _submit_all_imported_members(
             member_id=member_id,
             member_name=member_name,
             logger=logger,
+            skip_submit=skip_submit,
         )
 
-    logger.info("NAS bulk member timelines submitted: %s", len(members))
+    if skip_submit:
+        logger.info(
+            "NAS bulk member timelines reviewed without submission: %s",
+            len(members),
+        )
+    else:
+        logger.info("NAS bulk member timelines submitted: %s", len(members))
     return len(members)
 
 
@@ -352,6 +370,12 @@ async def run_bulk_add_member(
     if not excel_path:
         raise ValueError("NAS batch_member_file is required for bulk member upload")
 
+    skip_submit = bool(values.get("skip_member_submit", False))
+    if skip_submit:
+        logger.warning(
+            "NAS bulk member Submit clicks are disabled for this testing run"
+        )
+
     await _select_bulk_policy(page, selectors, values, logger)
     await _upload_bulk_excel(
         page,
@@ -360,6 +384,15 @@ async def run_bulk_add_member(
         download_dir,
         logger,
     )
-    submitted_count = await _submit_all_imported_members(page, selectors, logger)
-    logger.info("NAS bulk add-member process completed | Members=%s", submitted_count)
-    return submitted_count
+    processed_count = await _submit_all_imported_members(
+        page,
+        selectors,
+        logger,
+        skip_submit=skip_submit,
+    )
+    logger.info(
+        "NAS bulk add-member process completed | Members=%s | Submitted=%s",
+        processed_count,
+        not skip_submit,
+    )
+    return processed_count
