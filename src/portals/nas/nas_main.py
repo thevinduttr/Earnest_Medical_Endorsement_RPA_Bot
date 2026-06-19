@@ -458,31 +458,32 @@ async def run(
                 )
 
             if use_database and request_id and request_user_ids:
+                document_root = (
+                    Path("data/attachments/samples/nas/add/batch/member_documents")
+                    .resolve()
+                )
+                document_preparation = prepare_nas_member_documents(
+                    request_id=str(request_id),
+                    user_ids=request_user_ids,
+                    destination_root=document_root,
+                    logger=logger,
+                )
+                add_member_values["member_user_ids"] = (
+                    document_preparation.ordered_user_ids
+                )
+                add_member_values["member_names"] = (
+                    document_preparation.ordered_member_names
+                )
+                add_member_values["member_documents_by_user"] = (
+                    document_preparation.documents_by_user
+                )
+                add_member_values["member_documents_manifest"] = str(
+                    document_preparation.manifest_path
+                )
                 if env_bulk_file:
                     logger.warning(
-                        "NAS member document preparation skipped because "
-                        "NAS_BULK_MEMBER_FILE is an external override; portal members "
-                        "cannot be safely mapped to request UserIds"
-                    )
-                else:
-                    document_root = (
-                        Path(upload_paths["batch_member_file"]).resolve().parent
-                        / "member_documents"
-                    )
-                    document_preparation = prepare_nas_member_documents(
-                        request_id=str(request_id),
-                        user_ids=request_user_ids,
-                        destination_root=document_root,
-                        logger=logger,
-                    )
-                    add_member_values["member_user_ids"] = (
-                        document_preparation.ordered_user_ids
-                    )
-                    add_member_values["member_names"] = (
-                        document_preparation.ordered_member_names
-                    )
-                    add_member_values["member_documents_manifest"] = str(
-                        document_preparation.manifest_path
+                        "NAS documents were mapped to the external Excel override "
+                        "using the active request's database member order"
                     )
         elif use_database:
             result = build_nas_deletion_census_file(

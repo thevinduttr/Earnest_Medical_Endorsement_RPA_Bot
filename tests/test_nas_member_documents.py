@@ -18,11 +18,17 @@ from src.services.document_service.nas_member_documents import (
 class NasMemberDocumentTests(unittest.TestCase):
     def test_document_type_mapping(self) -> None:
         self.assertEqual(
-            "emirates_id",
+            "national_id_copy",
             map_document_type_to_nas_field("Emirates ID Front"),
         )
-        self.assertEqual("passport", map_document_type_to_nas_field("Passport"))
-        self.assertEqual("visa", map_document_type_to_nas_field("Residence Visa"))
+        self.assertEqual(
+            "passport_copy",
+            map_document_type_to_nas_field("Passport"),
+        )
+        self.assertEqual(
+            "visa_copy",
+            map_document_type_to_nas_field("Residence Visa"),
+        )
         self.assertEqual(
             "supporting_document",
             map_document_type_to_nas_field("Other Attachment"),
@@ -94,15 +100,15 @@ class NasMemberDocumentTests(unittest.TestCase):
             self.assertEqual("U2", manifest["members"][0]["user_id"])
             self.assertEqual("Second Member", manifest["members"][0]["member_name"])
             self.assertEqual(
-                "passport",
+                "passport_copy",
                 manifest["members"][0]["documents"][0]["nas_field"],
             )
             self.assertEqual(
-                "emirates_id",
+                "national_id_copy",
                 manifest["members"][1]["documents"][0]["nas_field"],
             )
 
-    def test_missing_member_documents_fail_clearly(self) -> None:
+    def test_missing_member_documents_are_manifested_without_failure(self) -> None:
         members = pd.DataFrame([{"UserId": "U1", "FirstName": "First"}])
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
@@ -117,16 +123,14 @@ class NasMemberDocumentTests(unittest.TestCase):
                     return_value=({}, {}, []),
                 ),
             ):
-                with self.assertRaisesRegex(
-                    RuntimeError,
-                    "documents are missing for UserIds: U1",
-                ):
-                    prepare_nas_member_documents(
-                        request_id="REQ-1",
-                        user_ids=["U1"],
-                        destination_root=Path(temp_dir),
-                        logger=logging.getLogger("test_nas_member_documents"),
-                    )
+                result = prepare_nas_member_documents(
+                    request_id="REQ-1",
+                    user_ids=["U1"],
+                    destination_root=Path(temp_dir),
+                    logger=logging.getLogger("test_nas_member_documents"),
+                )
+
+            self.assertEqual({"U1": []}, result.documents_by_user)
 
 
 if __name__ == "__main__":

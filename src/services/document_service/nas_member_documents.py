@@ -18,18 +18,23 @@ class NasMemberDocumentPreparation:
     ordered_user_ids: list[str]
     ordered_member_names: list[str]
     downloaded_by_user: dict[str, list[Path]]
+    documents_by_user: dict[str, list[dict[str, str]]]
     manifest_path: Path
 
 
 _DOCUMENT_FIELD_PATTERNS = (
-    ("emirates_id", ("EMIRATES", "EID")),
-    ("passport", ("PASSPORT",)),
-    ("visa", ("VISA",)),
-    ("member_photo", ("PHOTO", "PICTURE")),
-    ("birth_certificate", ("BIRTH",)),
-    ("coc", ("COC", "CERTIFICATE OF CONTINUITY")),
-    ("pec_declaration", ("PEC",)),
-    ("medical_declaration", ("MEDICAL",)),
+    ("visa_copy", ("VISA",)),
+    ("passport_copy", ("PASSPORT",)),
+    ("national_id_copy", ("EMIRATES", "EMIRATES ID", "EID", "NATIONAL ID")),
+    (
+        "continuity_certificate",
+        ("COC", "CONTINUITY", "CERTIFICATE OF CONTINUITY"),
+    ),
+    ("member_certificate", ("MEMBER CERTIFICATE", "EMPLOYEE CERTIFICATE")),
+    (
+        "declaration_attachment",
+        ("PEC", "DECLARATION", "MEDICAL"),
+    ),
 )
 
 
@@ -107,12 +112,13 @@ def prepare_nas_member_documents(
         if not downloaded_by_user.get(user_id)
     ]
     if missing_users:
-        raise RuntimeError(
-            "NAS member documents are missing for UserIds: "
-            + ", ".join(missing_users)
+        logger.warning(
+            "No NAS member documents found for UserIds: %s",
+            ", ".join(missing_users),
         )
 
     manifest_members = []
+    documents_by_user: dict[str, list[dict[str, str]]] = {}
     rows_by_user = {
         _text(row.get("UserId")): row
         for row in member_rows
@@ -130,6 +136,7 @@ def prepare_nas_member_documents(
                     "path": str(Path(file_path).resolve()),
                 }
             )
+        documents_by_user[user_id] = documents
         manifest_members.append(
             {
                 "member_index": member_index,
@@ -166,5 +173,6 @@ def prepare_nas_member_documents(
             for user_id in ordered_user_ids
         ],
         downloaded_by_user=downloaded_by_user,
+        documents_by_user=documents_by_user,
         manifest_path=manifest_path,
     )
