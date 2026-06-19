@@ -153,31 +153,17 @@ def _format_process_details(process_data: Mapping[str, object]) -> str:
     portal_name = str(process_data.get("PortalName", "")).strip()
     reference_number = str(process_data.get("ReferenceNumber", "")).strip()
     policy_number = str(process_data.get("PolicyNumber", "")).strip()
-
-    return f"""
-        <table style="border-collapse: collapse; width: 100%; max-width: 760px;">
-            <tr>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6; font-weight: 700; width: 220px;">RequestId</td>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6;">{_safe(request_id)}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6; font-weight: 700;">ActionType</td>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6;">{_safe(action_type)}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6; font-weight: 700;">PortalName</td>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6;">{_safe(portal_name)}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6; font-weight: 700;">ReferenceNumber</td>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6;">{_safe(reference_number)}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6; font-weight: 700;">PolicyNumber</td>
-                <td style="padding: 8px 12px; border: 1px solid #d6d6d6;">{_safe(policy_number)}</td>
-            </tr>
-        </table>
-    """
+    items: list[tuple[str, object]] = [
+        ("RequestId", request_id),
+        ("ActionType", action_type),
+        ("PortalName", portal_name),
+        ("ReferenceNumber", reference_number),
+        ("PolicyNumber", policy_number),
+    ]
+    processed_members = process_data.get("ProcessedMembers")
+    if processed_members is not None:
+        items.append(("Processed Members", processed_members))
+    return _format_kv_table(items)
 
 
 def _format_extracted_data(process_data: Mapping[str, object]) -> str:
@@ -227,7 +213,12 @@ def _format_extracted_data(process_data: Mapping[str, object]) -> str:
 def build_success_subject(process_data: Mapping[str, object]) -> str:
     request_id = str(process_data.get("RequestId", "")).strip()
     policy_number = str(process_data.get("PolicyNumber", "")).strip()
-    return f"RequestNumber : {request_id} - PolicyNumber : {policy_number} - Status : Addion Completed"
+    status = (
+        "Test Review Completed"
+        if process_data.get("SubmissionSkipped")
+        else "Addion Completed"
+    )
+    return f"RequestNumber : {request_id} - PolicyNumber : {policy_number} - Status : {status}"
 
 
 def build_success_body(process_data: Mapping[str, object], attachments: Sequence[Path] | None = None) -> str:
@@ -236,17 +227,37 @@ def build_success_body(process_data: Mapping[str, object], attachments: Sequence
     screenshot_rows = "".join(f"<li>{_safe(Path(path).name)}</li>" for path in screenshot_paths)
     if not screenshot_rows:
         screenshot_rows = "<li>No screenshots attached.</li>"
+    has_reference = bool(str(process_data.get("ReferenceNumber", "")).strip())
+    submission_skipped = bool(process_data.get("SubmissionSkipped"))
+    if submission_skipped:
+        heading = "NAS Test Review Completed"
+        completion_message = (
+            "The NAS member review completed successfully. Member Submit clicks "
+            "were skipped because test mode is enabled."
+        )
+    else:
+        heading = "Addition Completed"
+        completion_message = (
+            "The batch addition completed successfully and the submission reference number was captured."
+            if has_reference
+            else "The batch addition completed successfully."
+        )
+    extracted_data = ""
+    if process_data.get("endorsement_number") or process_data.get("insured_details"):
+        extracted_data = f"""
+                <h3 style="margin: 24px 0 12px; color: #111827;">Extracted Data</h3>
+                {_format_extracted_data(process_data)}
+        """
 
     return f"""
     <html>
         <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
             <div style="max-width: 820px; margin: 0 auto; padding: 16px;">
-                <h2 style="margin: 0 0 12px; color: #0f766e;">Addition Completed</h2>
-                <p>The batch addition completed successfully and the submission reference number was captured.</p>
+                <h2 style="margin: 0 0 12px; color: #0f766e;">{heading}</h2>
+                <p>{completion_message}</p>
                 <h3 style="margin: 24px 0 12px; color: #111827;">Process Details</h3>
                 {_format_process_details(process_data)}
-                <h3 style="margin: 24px 0 12px; color: #111827;">Extracted Data</h3>
-                {_format_extracted_data(process_data)}
+                {extracted_data}
                 <h3 style="margin: 24px 0 12px; color: #111827;">Attached Documents</h3>
                 <ul>
                     {attachment_rows}

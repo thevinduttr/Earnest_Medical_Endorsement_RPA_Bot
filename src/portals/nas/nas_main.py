@@ -17,6 +17,8 @@ from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy
 from src.portals.nas.main_process.login import login
 from src.services.mail_service.outlook_mail_service import send_outlook_email
 from src.services.mail_service.sukoon_email_templates import (
+    build_success_body,
+    build_success_subject,
     build_unexpected_body,
     build_unexpected_subject,
     build_validation_body,
@@ -247,6 +249,30 @@ def _send_nas_validation_error_email(
         )
     except Exception as error:
         logger.error(f"Failed to send NAS validation error email: {error}")
+
+
+def _send_nas_success_email(
+    *,
+    process_data: dict[str, object],
+    screenshot_path: Path,
+    logger: logging.Logger,
+) -> None:
+    try:
+        mail_config = MailConfig.load(Path("config/mail.ini"))
+        attachments = [screenshot_path] if screenshot_path.exists() else []
+        process_data["screenshots"] = [str(path) for path in attachments]
+        subject = build_success_subject(process_data)
+        body = build_success_body(process_data, attachments=attachments)
+        send_outlook_email(
+            mail_config,
+            subject=subject,
+            body=body,
+            attachments=attachments or None,
+            logger=logger,
+        )
+        logger.info("Sent NAS addition success email notification")
+    except Exception as error:
+        logger.error(f"Failed to send NAS addition success email: {error}")
 
 
 def _should_pause_after_login(browser_config: dict) -> bool:
@@ -562,11 +588,37 @@ async def run(
                     logger=logger,
                 )
             elif process_key == "add_batch":
-                await run_bulk_add_member(
+                processed_members = await run_bulk_add_member(
                     page=page,
                     selectors=bulk_add_member_selectors,
                     values=add_member_values,
                     download_dir=run_dir,
+                    logger=logger,
+                )
+                skip_member_submit = bool(
+                    add_member_values.get("skip_member_submit", False)
+                )
+                success_shot = run_dir / "nas_bulk_add_success.png"
+                await page.screenshot(path=str(success_shot), full_page=True)
+                logger.info(
+                    "Saved NAS bulk addition completion screenshot: %s",
+                    success_shot,
+                )
+                success_process_data = _build_mail_process_data(
+                    request_id=request_id,
+                    policy_number=_resolve_policy_number(add_member_values),
+                    action_type=action_type,
+                    status=(
+                        "Test Review Completed"
+                        if skip_member_submit
+                        else "Addion Completed"
+                    ),
+                )
+                success_process_data["ProcessedMembers"] = processed_members
+                success_process_data["SubmissionSkipped"] = skip_member_submit
+                _send_nas_success_email(
+                    process_data=success_process_data,
+                    screenshot_path=success_shot,
                     logger=logger,
                 )
 
