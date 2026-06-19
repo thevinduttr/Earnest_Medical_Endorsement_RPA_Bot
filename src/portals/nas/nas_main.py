@@ -7,9 +7,10 @@ import os
 
 from playwright.async_api import async_playwright
 
-from src.portals.nas.add_process.bulk_member.bulk_add_member import run_bulk_add_member
 from src.portals.nas.add_process.bulk_member.bulk_add_member import (
+    NasBulkValidationDownloadError,
     resolve_payer_name_from_email_filename,
+    run_bulk_add_member,
 )
 from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
 from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
@@ -18,6 +19,8 @@ from src.services.mail_service.outlook_mail_service import send_outlook_email
 from src.services.mail_service.sukoon_email_templates import (
     build_unexpected_body,
     build_unexpected_subject,
+    build_validation_body,
+    build_validation_subject,
 )
 from src.portals.nas.main_process.new_button_page import open_new_member_page
 from src.portals.nas.main_process.request_dashboard_page import open_request_dashboard_page
@@ -199,6 +202,51 @@ def _send_nas_error_email(
         logger.info("Sent NAS failure email notification")
     except Exception as error:
         logger.error(f"Failed to send NAS failure email notification: {error}")
+
+
+def _send_nas_validation_error_email(
+    *,
+    process_data: dict[str, str],
+    error_message: str,
+    downloaded_file: Path,
+    screenshot_path: Path | None,
+    logger: logging.Logger,
+) -> None:
+    try:
+        mail_config = MailConfig.load(Path("config/mail.ini"))
+        attachments = [
+            path
+            for path in (downloaded_file, screenshot_path)
+            if path is not None and path.exists()
+        ]
+        validation_rows = [
+            {
+                "Downloaded File": downloaded_file.name,
+                "Error Message": error_message,
+            }
+        ]
+        subject = build_validation_subject(
+            str(process_data.get("RequestId", "")).strip(),
+            str(process_data.get("PolicyNumber", "")).strip(),
+        )
+        body = build_validation_body(
+            process_data,
+            validation_rows,
+            attachments,
+        )
+        send_outlook_email(
+            mail_config,
+            subject=subject,
+            body=body,
+            attachments=attachments or None,
+            logger=logger,
+        )
+        logger.info(
+            "Sent NAS validation error email with workbook attachment: %s",
+            downloaded_file,
+        )
+    except Exception as error:
+        logger.error(f"Failed to send NAS validation error email: {error}")
 
 
 def _should_pause_after_login(browser_config: dict) -> bool:
@@ -478,6 +526,7 @@ async def run(
                     page=page,
                     selectors=bulk_add_member_selectors,
                     values=add_member_values,
+                    download_dir=run_dir,
                     logger=logger,
                 )
 
@@ -496,14 +545,27 @@ async def run(
                 request_id=request_id,
                 policy_number=_resolve_policy_number(add_member_values),
                 action_type=action_type,
-                status="Network or Loading Issue",
+                status=(
+                    "Validation Error"
+                    if isinstance(exc, NasBulkValidationDownloadError)
+                    else "Network or Loading Issue"
+                ),
             )
-            _send_nas_error_email(
-                process_data=failure_process_data,
-                error_message=str(exc),
-                screenshot_paths=error_shots,
-                logger=logger,
-            )
+            if isinstance(exc, NasBulkValidationDownloadError):
+                _send_nas_validation_error_email(
+                    process_data=failure_process_data,
+                    error_message=str(exc),
+                    downloaded_file=exc.downloaded_file,
+                    screenshot_path=error_shots[0] if error_shots else None,
+                    logger=logger,
+                )
+            else:
+                _send_nas_error_email(
+                    process_data=failure_process_data,
+                    error_message=str(exc),
+                    screenshot_paths=error_shots,
+                    logger=logger,
+                )
             raise
         finally:
             if context is not None and trace_started:

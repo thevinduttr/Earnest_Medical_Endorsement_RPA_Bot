@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 from pathlib import Path
 import re
@@ -22,6 +23,12 @@ PAYER_NAMES = {
     "LIVA": "Liva Insurance B.S.C. (C) - LIVA - Nas",
     "QIC": "Qatar Insurance Company - QIC - NAS",
 }
+
+
+class NasBulkValidationDownloadError(RuntimeError):
+    def __init__(self, message: str, downloaded_file: Path):
+        super().__init__(message)
+        self.downloaded_file = Path(downloaded_file)
 
 
 def resolve_payer_name_from_email_filename(filename: str | None) -> str | None:
@@ -163,6 +170,7 @@ async def _upload_bulk_excel(
     page: Page,
     selectors: Dict[str, Any],
     excel_path: str,
+    download_dir: Path,
     logger: logging.Logger,
 ) -> None:
     resolved_path = Path(excel_path).expanduser().resolve()
@@ -183,10 +191,68 @@ async def _upload_bulk_excel(
 
     save_button = page.locator(save_button_selector).first
     await save_button.wait_for(state="visible", timeout=30000)
+
+    download_task = asyncio.create_task(
+        page.wait_for_event("download", timeout=60000)
+    )
+    member_page_task = asyncio.create_task(
+        page.locator(member_links_selector).first.wait_for(
+            state="visible",
+            timeout=60000,
+        )
+    )
+
     await save_button.click()
     await _wait_after_click(page, timeout_ms=30000)
 
-    await page.locator(member_links_selector).first.wait_for(state="visible", timeout=60000)
+    try:
+        done, _ = await asyncio.wait(
+            {download_task, member_page_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if download_task in done and not download_task.cancelled():
+            try:
+                download = download_task.result()
+            except PlaywrightTimeoutError:
+                download = None
+
+            if download is not None:
+                download_dir = Path(download_dir).resolve()
+                download_dir.mkdir(parents=True, exist_ok=True)
+                suggested_name = Path(
+                    str(
+                        download.suggested_filename
+                        or "nas_bulk_validation_errors.xlsx"
+                    )
+                ).name
+                output_path = download_dir / f"nas_validation_{suggested_name}"
+                await download.save_as(str(output_path))
+                logger.error(
+                    "NAS bulk upload validation workbook downloaded: %s",
+                    output_path,
+                )
+                raise NasBulkValidationDownloadError(
+                    "NAS rejected the uploaded member Excel file and returned a "
+                    "validation workbook. Review the attached Excel file and "
+                    "correct the invalid member data.",
+                    downloaded_file=output_path,
+                )
+
+        if member_page_task in done:
+            member_page_task.result()
+        else:
+            raise RuntimeError(
+                "NAS bulk import Save completed, but neither a validation workbook "
+                "download nor the member timeline page appeared"
+            )
+    finally:
+        for task in (download_task, member_page_task):
+            if not task.done():
+                task.cancel()
+            with suppress(asyncio.CancelledError, PlaywrightTimeoutError):
+                await task
+
     logger.info("NAS bulk import saved; member timeline page is ready")
 
 
@@ -278,6 +344,7 @@ async def run_bulk_add_member(
     page: Page,
     selectors: Dict[str, Any],
     values: Dict[str, Any],
+    download_dir: Path,
     logger: logging.Logger,
 ) -> int:
     logger.info("NAS bulk add-member process started")
@@ -286,7 +353,13 @@ async def run_bulk_add_member(
         raise ValueError("NAS batch_member_file is required for bulk member upload")
 
     await _select_bulk_policy(page, selectors, values, logger)
-    await _upload_bulk_excel(page, selectors, excel_path, logger)
+    await _upload_bulk_excel(
+        page,
+        selectors,
+        excel_path,
+        download_dir,
+        logger,
+    )
     submitted_count = await _submit_all_imported_members(page, selectors, logger)
     logger.info("NAS bulk add-member process completed | Members=%s", submitted_count)
     return submitted_count

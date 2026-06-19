@@ -72,7 +72,7 @@ def build_unexpected_subject(request_number: str, policy_number: str) -> str:
 def build_validation_body(
     process_data: Mapping[str, object],
     invalid_rows: Sequence[Mapping[str, object]],
-    screenshot_paths: Sequence[Path | str] | None = None,
+    attachment_paths: Sequence[Path | str] | None = None,
 ) -> str:
     request_number = str(process_data.get("RequestId", "")).strip()
     policy_number = str(process_data.get("PolicyNumber", "")).strip()
@@ -95,11 +95,11 @@ def build_validation_body(
                 ])}
                 <h3 style="margin: 24px 0 12px; color: #111827;">Validation Errors</h3>
                 {_format_rows_table(invalid_rows)}
-                <h3 style="margin: 24px 0 12px; color: #111827;">Validation Page Screenshot</h3>
-                <p>The validation-page screenshot is attached to this email.</p>
-                <h3 style="margin: 24px 0 12px; color: #111827;">Attached Screenshots</h3>
+                <h3 style="margin: 24px 0 12px; color: #111827;">Validation Attachments</h3>
+                <p>Review the attached validation workbook and/or portal screenshot for further details.</p>
+                <h3 style="margin: 24px 0 12px; color: #111827;">Attached Files</h3>
                 <ul>
-                    {_format_screenshot_list(screenshot_paths)}
+                    {_format_screenshot_list(attachment_paths)}
                 </ul>
             </div>
         </body>
