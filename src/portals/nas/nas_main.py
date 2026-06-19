@@ -387,6 +387,38 @@ async def run(
                     request_id,
                     source_email_filename or "-",
                 )
+
+            env_payer_name = str(os.getenv("NAS_BULK_PAYER_NAME") or "").strip()
+            if env_payer_name:
+                resolved_env_payer = (
+                    resolve_payer_name_from_email_filename(env_payer_name)
+                    or env_payer_name
+                )
+                add_member_values["resolved_payer_name"] = resolved_env_payer
+                logger.info(
+                    "Using NAS_BULK_PAYER_NAME override: %s",
+                    resolved_env_payer,
+                )
+
+            env_contract_name = str(
+                os.getenv("NAS_BULK_CONTRACT_NAME") or ""
+            ).strip()
+            if env_contract_name:
+                add_member_values["contract_name"] = env_contract_name
+                logger.info(
+                    "Using NAS_BULK_CONTRACT_NAME override: %s",
+                    env_contract_name,
+                )
+
+            env_policy_filter = str(
+                os.getenv("NAS_BULK_POLICY_FILTER") or ""
+            ).strip()
+            if env_policy_filter:
+                add_member_values["company_name"] = env_policy_filter
+                logger.info(
+                    "Using NAS_BULK_POLICY_FILTER override: %s",
+                    env_policy_filter,
+                )
         elif use_database:
             result = build_nas_deletion_census_file(
                 request_id=str(request_id or ""),
