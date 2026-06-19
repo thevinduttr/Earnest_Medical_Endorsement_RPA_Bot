@@ -37,6 +37,9 @@ from src.services.census_service.nas.addition_census import (
 from src.services.census_service.nas.deletion_census import (
     build_nas_deletion_census_file,
 )
+from src.services.document_service.nas_member_documents import (
+    prepare_nas_member_documents,
+)
 from src.utils.load_data import load_json_file, load_section_from_yaml, load_yaml_file
 from src.utils.mail_config import MailConfig
 from src.utils.upload_file_paths import get_upload_paths
@@ -254,12 +257,12 @@ def _send_nas_validation_error_email(
 def _send_nas_success_email(
     *,
     process_data: dict[str, object],
-    screenshot_path: Path,
+    screenshot_paths: list[Path],
     logger: logging.Logger,
 ) -> None:
     try:
         mail_config = MailConfig.load(Path("config/mail.ini"))
-        attachments = [screenshot_path] if screenshot_path.exists() else []
+        attachments = [path for path in screenshot_paths if path.exists()]
         process_data["screenshots"] = [str(path) for path in attachments]
         subject = build_success_subject(process_data)
         body = build_success_body(process_data, attachments=attachments)
@@ -453,6 +456,34 @@ async def run(
                     "NAS bulk member submit testing override enabled: %s",
                     skip_member_submit,
                 )
+
+            if use_database and request_id and request_user_ids:
+                if env_bulk_file:
+                    logger.warning(
+                        "NAS member document preparation skipped because "
+                        "NAS_BULK_MEMBER_FILE is an external override; portal members "
+                        "cannot be safely mapped to request UserIds"
+                    )
+                else:
+                    document_root = (
+                        Path(upload_paths["batch_member_file"]).resolve().parent
+                        / "member_documents"
+                    )
+                    document_preparation = prepare_nas_member_documents(
+                        request_id=str(request_id),
+                        user_ids=request_user_ids,
+                        destination_root=document_root,
+                        logger=logger,
+                    )
+                    add_member_values["member_user_ids"] = (
+                        document_preparation.ordered_user_ids
+                    )
+                    add_member_values["member_names"] = (
+                        document_preparation.ordered_member_names
+                    )
+                    add_member_values["member_documents_manifest"] = str(
+                        document_preparation.manifest_path
+                    )
         elif use_database:
             result = build_nas_deletion_census_file(
                 request_id=str(request_id or ""),
@@ -588,7 +619,7 @@ async def run(
                     logger=logger,
                 )
             elif process_key == "add_batch":
-                processed_members = await run_bulk_add_member(
+                bulk_result = await run_bulk_add_member(
                     page=page,
                     selectors=bulk_add_member_selectors,
                     values=add_member_values,
@@ -597,12 +628,6 @@ async def run(
                 )
                 skip_member_submit = bool(
                     add_member_values.get("skip_member_submit", False)
-                )
-                success_shot = run_dir / "nas_bulk_add_success.png"
-                await page.screenshot(path=str(success_shot), full_page=True)
-                logger.info(
-                    "Saved NAS bulk addition completion screenshot: %s",
-                    success_shot,
                 )
                 success_process_data = _build_mail_process_data(
                     request_id=request_id,
@@ -614,11 +639,11 @@ async def run(
                         else "Addion Completed"
                     ),
                 )
-                success_process_data["ProcessedMembers"] = processed_members
+                success_process_data["ProcessedMembers"] = bulk_result.processed_count
                 success_process_data["SubmissionSkipped"] = skip_member_submit
                 _send_nas_success_email(
                     process_data=success_process_data,
-                    screenshot_path=success_shot,
+                    screenshot_paths=bulk_result.member_screenshots,
                     logger=logger,
                 )
 

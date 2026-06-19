@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
@@ -31,6 +32,12 @@ class NasBulkValidationDownloadError(RuntimeError):
         self.downloaded_file = Path(downloaded_file)
 
 
+@dataclass(frozen=True)
+class NasBulkAddResult:
+    processed_count: int
+    member_screenshots: list[Path]
+
+
 def resolve_payer_name_from_email_filename(filename: str | None) -> str | None:
     searchable = re.sub(r"[^A-Z0-9]+", " ", str(filename or "").upper())
     codes = {code for code in PAYER_NAMES if re.search(rf"\b{re.escape(code)}\b", searchable)}
@@ -42,6 +49,17 @@ def resolve_payer_name_from_email_filename(filename: str | None) -> str | None:
 def _canonical_contract_text(value: Any) -> str:
     normalized = normalize_bulk_contract_name(value).upper()
     return " ".join(re.sub(r"[^A-Z0-9]+", " ", normalized).split())
+
+
+def _safe_file_part(value: Any, fallback: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip())
+    return normalized.strip("_")[:80] or fallback
+
+
+def _canonical_member_name(value: Any) -> str:
+    return " ".join(
+        re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).split()
+    )
 
 
 async def _wait_after_click(page: Page, timeout_ms: int = 15000) -> None:
@@ -261,10 +279,13 @@ async def _submit_member_timeline(
     selectors: Dict[str, Any],
     member_id: str,
     member_name: str,
+    member_index: int,
+    member_user_id: str,
+    screenshot_dir: Path,
     logger: logging.Logger,
     skip_submit: bool = False,
     max_steps: int = 12,
-) -> None:
+) -> Path:
     next_selector = ensure_selector_present(selectors, "timeline_next_button", logger)
     submit_selector = ensure_selector_present(selectors, "timeline_submit_button", logger)
 
@@ -277,6 +298,7 @@ async def _submit_member_timeline(
     for step_number in range(1, max_steps + 1):
         submit_button = await _first_visible_enabled(page.locator(submit_selector))
         if submit_button is not None:
+            evidence_state = "reviewed" if skip_submit else "submitted"
             if skip_submit:
                 logger.warning(
                     "NAS bulk member reached Submit but click was skipped for testing: "
@@ -284,16 +306,36 @@ async def _submit_member_timeline(
                     member_name,
                     step_number - 1,
                 )
-                return
+            else:
+                await submit_button.click()
+                await _wait_after_click(page, timeout_ms=30000)
+                logger.info(
+                    "NAS bulk member submitted: %s | TimelineSteps=%s",
+                    member_name,
+                    step_number - 1,
+                )
 
-            await submit_button.click()
-            await _wait_after_click(page, timeout_ms=30000)
-            logger.info(
-                "NAS bulk member submitted: %s | TimelineSteps=%s",
-                member_name,
-                step_number - 1,
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_name = (
+                f"member_{member_index:03d}_"
+                f"{_safe_file_part(member_user_id, 'unmapped')}_"
+                f"{_safe_file_part(member_name, 'member')}_"
+                f"{evidence_state}.jpg"
             )
-            return
+            screenshot_path = screenshot_dir / screenshot_name
+            await page.screenshot(
+                path=str(screenshot_path),
+                type="jpeg",
+                quality=55,
+                full_page=True,
+            )
+            logger.info(
+                "Saved NAS member evidence screenshot | Member=%s | UserId=%s | Path=%s",
+                member_name,
+                member_user_id or "-",
+                screenshot_path,
+            )
+            return screenshot_path
 
         next_button = await _first_visible_enabled(page.locator(next_selector))
         if next_button is None:
@@ -319,9 +361,12 @@ async def _submit_member_timeline(
 async def _submit_all_imported_members(
     page: Page,
     selectors: Dict[str, Any],
+    member_user_ids: list[str],
+    expected_member_names: list[str],
+    screenshot_dir: Path,
     logger: logging.Logger,
     skip_submit: bool = False,
-) -> int:
+) -> NasBulkAddResult:
     member_links_selector = ensure_selector_present(selectors, "member_links", logger)
     member_links = page.locator(member_links_selector)
     await member_links.first.wait_for(state="visible", timeout=60000)
@@ -338,15 +383,42 @@ async def _submit_all_imported_members(
         raise RuntimeError("NAS bulk import displayed no member records")
 
     logger.info("NAS bulk members discovered: %s", len(members))
-    for member_id, member_name in members:
-        await _submit_member_timeline(
+    screenshots: list[Path] = []
+    for member_index, (member_id, member_name) in enumerate(members, start=1):
+        member_user_id = (
+            member_user_ids[member_index - 1]
+            if member_index <= len(member_user_ids)
+            else ""
+        )
+        expected_member_name = (
+            expected_member_names[member_index - 1]
+            if member_index <= len(expected_member_names)
+            else ""
+        )
+        if expected_member_name:
+            expected_canonical = _canonical_member_name(expected_member_name)
+            actual_canonical = _canonical_member_name(member_name)
+            if (
+                expected_canonical not in actual_canonical
+                and actual_canonical not in expected_canonical
+            ):
+                raise RuntimeError(
+                    "NAS imported member order does not match the generated census | "
+                    f"Index={member_index} | UserId={member_user_id} | "
+                    f"Expected={expected_member_name} | Portal={member_name}"
+                )
+        screenshot = await _submit_member_timeline(
             page=page,
             selectors=selectors,
             member_id=member_id,
             member_name=member_name,
+            member_index=member_index,
+            member_user_id=member_user_id,
+            screenshot_dir=screenshot_dir,
             logger=logger,
             skip_submit=skip_submit,
         )
+        screenshots.append(screenshot)
 
     if skip_submit:
         logger.info(
@@ -355,7 +427,10 @@ async def _submit_all_imported_members(
         )
     else:
         logger.info("NAS bulk member timelines submitted: %s", len(members))
-    return len(members)
+    return NasBulkAddResult(
+        processed_count=len(members),
+        member_screenshots=screenshots,
+    )
 
 
 async def run_bulk_add_member(
@@ -364,7 +439,7 @@ async def run_bulk_add_member(
     values: Dict[str, Any],
     download_dir: Path,
     logger: logging.Logger,
-) -> int:
+) -> NasBulkAddResult:
     logger.info("NAS bulk add-member process started")
     excel_path = str(values.get("batch_member_file") or "").strip()
     if not excel_path:
@@ -384,15 +459,26 @@ async def run_bulk_add_member(
         download_dir,
         logger,
     )
-    processed_count = await _submit_all_imported_members(
+    result = await _submit_all_imported_members(
         page,
         selectors,
-        logger,
+        member_user_ids=[
+            str(value).strip()
+            for value in values.get("member_user_ids", [])
+            if str(value).strip()
+        ],
+        expected_member_names=[
+            str(value).strip()
+            for value in values.get("member_names", [])
+            if str(value).strip()
+        ],
+        screenshot_dir=Path(download_dir) / "member_screenshots",
+        logger=logger,
         skip_submit=skip_submit,
     )
     logger.info(
         "NAS bulk add-member process completed | Members=%s | Submitted=%s",
-        processed_count,
+        result.processed_count,
         not skip_submit,
     )
-    return processed_count
+    return result

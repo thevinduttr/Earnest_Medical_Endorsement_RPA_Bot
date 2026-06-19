@@ -14,7 +14,9 @@ class NasSuccessEmailTests(unittest.TestCase):
         logger = logging.getLogger("test_nas_success_email")
         with tempfile.TemporaryDirectory() as temp_dir:
             screenshot = Path(temp_dir) / "nas_bulk_add_success.png"
+            second_screenshot = Path(temp_dir) / "nas_bulk_add_member_2.png"
             screenshot.write_bytes(b"png")
+            second_screenshot.write_bytes(b"png")
             process_data: dict[str, object] = {
                 "RequestId": "REQ-1",
                 "PolicyNumber": "POL-1",
@@ -31,16 +33,20 @@ class NasSuccessEmailTests(unittest.TestCase):
             ):
                 _send_nas_success_email(
                     process_data=process_data,
-                    screenshot_path=screenshot,
+                    screenshot_paths=[screenshot, second_screenshot],
                     logger=logger,
                 )
 
             kwargs = send_email.call_args.kwargs
-            self.assertEqual([screenshot], kwargs["attachments"])
+            self.assertEqual(
+                [screenshot, second_screenshot],
+                kwargs["attachments"],
+            )
             self.assertIn("Status : Addion Completed", kwargs["subject"])
             self.assertIn("Processed Members", kwargs["body"])
             self.assertIn(">3<", kwargs["body"])
             self.assertIn("nas_bulk_add_success.png", kwargs["body"])
+            self.assertIn("nas_bulk_add_member_2.png", kwargs["body"])
             self.assertNotIn("submission reference number was captured", kwargs["body"])
 
     def test_test_mode_email_is_sent_with_honest_status(self) -> None:
@@ -65,7 +71,7 @@ class NasSuccessEmailTests(unittest.TestCase):
             ):
                 _send_nas_success_email(
                     process_data=process_data,
-                    screenshot_path=screenshot,
+                    screenshot_paths=[screenshot],
                     logger=logger,
                 )
 

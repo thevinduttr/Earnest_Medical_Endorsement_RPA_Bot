@@ -485,6 +485,46 @@ def _download_documents_user_wise(
     return dict(downloaded_by_user), dict(errors_by_user), all_downloaded
 
 
+def download_request_documents_for_users(
+    *,
+    request_id: str,
+    user_ids: Iterable[str],
+    destination_root: Path,
+    logger: logging.Logger,
+) -> Tuple[Dict[str, List[Path]], Dict[str, List[str]], List[Path]]:
+    normalized_user_ids = [
+        str(user_id).strip()
+        for user_id in user_ids
+        if str(user_id).strip()
+    ]
+    if not str(request_id or "").strip():
+        raise ValueError("request_id is required to download NAS member documents")
+    if not normalized_user_ids:
+        return {}, {}, []
+
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        request_documents = _fetch_request_documents_for_users(
+            connection=connection,
+            request_id=str(request_id).strip(),
+            user_ids=normalized_user_ids,
+        )
+
+    logger.info(
+        "NAS member documents fetched | RequestId=%s | Users=%s | Documents=%s",
+        request_id,
+        len(normalized_user_ids),
+        len(request_documents),
+    )
+    blob_service = AzureBlobDownloadService(logger=logger)
+    return _download_documents_user_wise(
+        blob_service=blob_service,
+        request_documents=request_documents,
+        destination_root=Path(destination_root),
+        logger=logger,
+    )
+
+
 def _build_bulk_supporting_zip(
     downloaded_files: List[Path],
     destination_root: Path,
