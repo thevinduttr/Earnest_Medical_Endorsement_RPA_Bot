@@ -64,5 +64,43 @@ class NasFamilyMemberResolutionTests(unittest.TestCase):
         self.assertEqual(["23432", "23432", "23432", "23432", "POL-123"], params_arg)
 
 
+class NasFamilyMemberSelectionTests(unittest.TestCase):
+    @patch("src.services.db_service.nas.member_data_loader.AzureSQLConnection")
+    def test_has_dependents_returns_true_when_dependents_exist(self, mock_db_conn_class: MagicMock) -> None:
+        from src.services.db_service.nas.member_data_loader import has_dependents_in_request
+        
+        mock_db_instance = MagicMock()
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        
+        mock_db_conn_class.return_value.__enter__.return_value = mock_db_instance
+        mock_db_instance.connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (5,) # 5 dependents
+        
+        result = has_dependents_in_request("REQ-123", logger=logger)
+        self.assertTrue(result)
+        mock_cursor.execute.assert_called_once()
+        self.assertIn("UPPER(ISNULL(Relation, '')) NOT IN", mock_cursor.execute.call_args[0][0])
+        self.assertEqual(["REQ-123"], mock_cursor.execute.call_args[0][1])
+
+    @patch("src.services.db_service.nas.member_data_loader.AzureSQLConnection")
+    def test_has_dependents_returns_false_when_no_dependents_exist(self, mock_db_conn_class: MagicMock) -> None:
+        from src.services.db_service.nas.member_data_loader import has_dependents_in_request
+        
+        mock_db_instance = MagicMock()
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        
+        mock_db_conn_class.return_value.__enter__.return_value = mock_db_instance
+        mock_db_instance.connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (0,) # 0 dependents
+        
+        result = has_dependents_in_request("REQ-123", logger=logger)
+        self.assertFalse(result)
+
+
 if __name__ == "__main__":
     unittest.main()
+

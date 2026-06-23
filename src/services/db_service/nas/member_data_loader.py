@@ -460,3 +460,42 @@ ORDER BY CreatedAt DESC, Id DESC
         )
 
     return selector
+
+
+def has_dependents_in_request(request_id: str, logger=None) -> bool:
+    """
+    Checks if a request has any family member (dependent) records.
+    A dependent is defined as a record where Relation is NOT 'EMPLOYEE', 'PRINCIPAL', or empty/NULL.
+    """
+    request_id_text = str(request_id or "").strip()
+    if not request_id_text:
+        return False
+
+    query = f"""
+SELECT COUNT(*)
+FROM {TABLE_NAME}
+WHERE RequestId = ?
+  AND UPPER(ISNULL(Relation, '')) NOT IN ('EMPLOYEE', 'PRINCIPAL', '')
+"""
+    with AzureSQLConnection(logger=logger) as db_connection:
+        connection = db_connection.connect()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(query, [request_id_text])
+            row = cursor.fetchone()
+            if row and row[0] > 0:
+                if logger:
+                    logger.info(
+                        f"Detected {row[0]} dependent(s) (family members) "
+                        f"in RequestId={request_id_text}"
+                    )
+                return True
+        except Exception as e:
+            if logger:
+                logger.warning(
+                    f"Error checking dependents for RequestId={request_id_text}: {e}"
+                )
+        finally:
+            cursor.close()
+    return False
+

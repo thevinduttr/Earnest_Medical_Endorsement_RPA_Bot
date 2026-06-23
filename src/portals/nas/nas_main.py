@@ -30,6 +30,7 @@ from src.services.db_service.nas.member_data_loader import (
     load_latest_request_email_filename,
     load_member_process_values,
     load_process_selector,
+    has_dependents_in_request,
 )
 from src.services.census_service.nas.addition_census import (
     build_nas_addition_census_file,
@@ -345,6 +346,14 @@ async def run(
         action_type = selector["ActionType"]
         request_id = selector.get("RequestId") or request_id
         process_key = _resolve_process_key(request_type=request_type, action_type=action_type)
+
+        if request_type == "ADD" and process_key != "add_family":
+            if has_dependents_in_request(request_id, logger=logger):
+                logger.info(
+                    "Detected dependent/family member records in database. "
+                    f"Overriding process key for RequestId={request_id} to add_family."
+                )
+                process_key = "add_family"
 
         db_result = load_member_process_values(
             portal_name="NAS",
