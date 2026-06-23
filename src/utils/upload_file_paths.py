@@ -88,6 +88,8 @@ def _build_file_map(base_dir: Path) -> Dict[ProcessKey, Dict[str, str]]:
 
 def get_upload_paths(portal_name: str, request_type: str, action_type: str) -> Dict[str, str]:
     normalized_action = str(action_type).upper()
+    if normalized_action in {"FAMILY", "FAMILY_MEMBER"}:
+        normalized_action = "BATCH"
 
     key = (str(portal_name).upper(), str(request_type).upper(), normalized_action)
     base_dir = Path("data/attachments/samples")

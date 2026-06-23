@@ -49,6 +49,10 @@ PROCESS_FIELD_MAPS: Dict[str, Dict[str, str]] = {
         "company_name": "PolicyNumber",
         "contract_name": "ContractName",
     },
+    "add_family": {
+        "company_name": "PolicyNumber",
+        "contract_name": "ContractName",
+    },
     "delete_manual": {
         "company_name": "PolicyNumber",
         "contract_name": "ContractName",

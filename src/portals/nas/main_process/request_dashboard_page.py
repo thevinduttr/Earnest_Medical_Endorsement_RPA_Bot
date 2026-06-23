@@ -28,8 +28,8 @@ def _resolve_dashboard_action(process_key: str) -> Dict[str, Any]:
 
     if process == "add_family":
         return {
-            "key": "add_family_member_button",
-            "label": "NAS Add Family Member",
+            "key": "add_bulk_member_button",
+            "label": "NAS Add Bulk Members",
             "next_key": None,
             "next_label": None,
         }

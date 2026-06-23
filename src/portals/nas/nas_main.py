@@ -364,19 +364,19 @@ async def run(
             f"RequestId={db_result.request_id} | ActionType={action_type} | ProcessKey={process_key}"
         )
 
-    if process_key in {"add_batch", "delete_batch", "delete_bulk"}:
+    if process_key in {"add_batch", "delete_batch", "delete_bulk", "add_family"}:
         upload_paths = get_upload_paths("NAS", request_type, action_type)
         if not upload_paths:
             raise ValueError(
                 f"NAS upload path mapping is missing for {request_type} {action_type}"
             )
 
-        if process_key == "add_batch":
+        if process_key in {"add_batch", "add_family"}:
             env_bulk_file = str(os.getenv("NAS_BULK_MEMBER_FILE") or "").strip()
             if env_bulk_file:
                 upload_paths["batch_member_file"] = env_bulk_file
                 logger.info("Using NAS_BULK_MEMBER_FILE override: %s", env_bulk_file)
-            elif use_database:
+            elif use_database and process_key == "add_batch":
                 result = build_nas_addition_census_file(
                     request_id=str(request_id or ""),
                     output_path=upload_paths["batch_member_file"],
@@ -593,6 +593,30 @@ async def run(
 
             await _pause_after_login_if_enabled(page, pause_after_login, logger)
 
+            if process_key == "add_family":
+                from src.portals.nas.add_process.family_member.family_member_search import run_family_member_search
+                await run_family_member_search(
+                    page=page,
+                    request_id=str(request_id),
+                    request_user_ids=request_user_ids,
+                    run_dir=run_dir,
+                    logger=logger,
+                )
+                if use_database:
+                    result = build_nas_addition_census_file(
+                        request_id=str(request_id or ""),
+                        output_path=add_member_values["batch_member_file"],
+                        include_user_ids=request_user_ids or None,
+                        logger=logger,
+                    )
+                    logger.info(
+                        "NAS addition census ready after principal card lookups | "
+                        "Template=%s | Members=%s | Output=%s",
+                        result.template_path,
+                        result.members_count,
+                        result.output_path,
+                    )
+
             await open_new_member_page(
                 page=page,
                 selectors=new_button_selectors,
@@ -619,7 +643,7 @@ async def run(
                     values=add_member_values,
                     logger=logger,
                 )
-            elif process_key == "add_batch":
+            elif process_key in {"add_batch", "add_family"}:
                 bulk_result = await run_bulk_add_member(
                     page=page,
                     selectors=bulk_add_member_selectors,
