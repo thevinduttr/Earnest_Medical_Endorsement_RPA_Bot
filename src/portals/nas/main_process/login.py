@@ -12,6 +12,10 @@ from src.utils.mail_config import MailConfig
 from src.utils.support_functions import run_actions
 
 
+class NasOtpNotReceivedError(RuntimeError):
+    """Raised when the NAS OTP email is not received for the current login."""
+
+
 async def _is_mfa_page_visible(
     page: Page,
     login_selectors: Dict[str, Any],
@@ -181,7 +185,7 @@ async def _find_otp_for_current_login(
             logger=logger,
         )
     except RuntimeError as exc:
-        raise RuntimeError(
+        raise NasOtpNotReceivedError(
             "NAS OTP was not received for the current login session. "
             "Login will stop without clicking Resend so the browser can close "
             "and the existing retry process can start a fresh login."

@@ -17,7 +17,7 @@ from src.portals.nas.delete_process.bulk_member.bulk_delete_member import (
 )
 from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
 from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
-from src.portals.nas.main_process.login import login
+from src.portals.nas.main_process.login import NasOtpNotReceivedError, login
 from src.services.mail_service.outlook_mail_service import send_outlook_email
 from src.services.mail_service.sukoon_email_templates import (
     build_success_body,
@@ -556,215 +556,234 @@ async def run(
 
     page = None
     browser = None
+    max_login_attempts = 3
     async with async_playwright() as playwright:
-        context = None
-        trace_started = False
-        try:
-            if persistent_context:
-                user_data_dir.mkdir(parents=True, exist_ok=True)
-                if runtime_engine == "chromium":
-                    context = await playwright.chromium.launch_persistent_context(
-                        user_data_dir=str(user_data_dir.resolve()),
-                        headless=headless,
-                        channel=browser_channel,
-                        viewport={"width": width, "height": height},
-                    )
-                elif runtime_engine == "firefox":
-                    context = await playwright.firefox.launch_persistent_context(
-                        user_data_dir=str(user_data_dir.resolve()),
-                        headless=headless,
-                        viewport={"width": width, "height": height},
-                    )
-                elif runtime_engine == "webkit":
-                    context = await playwright.webkit.launch_persistent_context(
-                        user_data_dir=str(user_data_dir.resolve()),
-                        headless=headless,
-                        viewport={"width": width, "height": height},
-                    )
+        for login_attempt in range(1, max_login_attempts + 1):
+            context = None
+            trace_started = False
+            page = None
+            browser = None
+            try:
+                logger.info(
+                    "NAS browser session attempt started | Attempt=%s/%s",
+                    login_attempt,
+                    max_login_attempts,
+                )
+                if persistent_context:
+                    user_data_dir.mkdir(parents=True, exist_ok=True)
+                    if runtime_engine == "chromium":
+                        context = await playwright.chromium.launch_persistent_context(
+                            user_data_dir=str(user_data_dir.resolve()),
+                            headless=headless,
+                            channel=browser_channel,
+                            viewport={"width": width, "height": height},
+                        )
+                    elif runtime_engine == "firefox":
+                        context = await playwright.firefox.launch_persistent_context(
+                            user_data_dir=str(user_data_dir.resolve()),
+                            headless=headless,
+                            viewport={"width": width, "height": height},
+                        )
+                    elif runtime_engine == "webkit":
+                        context = await playwright.webkit.launch_persistent_context(
+                            user_data_dir=str(user_data_dir.resolve()),
+                            headless=headless,
+                            viewport={"width": width, "height": height},
+                        )
+                    else:
+                        raise ValueError(f"Unsupported browser engine: {browser_engine}")
+                    logger.info(f"Using persistent NAS browser profile: {user_data_dir}")
                 else:
-                    raise ValueError(f"Unsupported browser engine: {browser_engine}")
-                logger.info(f"Using persistent NAS browser profile: {user_data_dir}")
-            else:
-                if runtime_engine == "chromium":
-                    browser = await playwright.chromium.launch(headless=headless, channel=browser_channel)
-                elif runtime_engine == "firefox":
-                    browser = await playwright.firefox.launch(headless=headless)
-                elif runtime_engine == "webkit":
-                    browser = await playwright.webkit.launch(headless=headless)
-                else:
-                    raise ValueError(f"Unsupported browser engine: {browser_engine}")
-                context = await browser.new_context(viewport={"width": width, "height": height})
+                    if runtime_engine == "chromium":
+                        browser = await playwright.chromium.launch(headless=headless, channel=browser_channel)
+                    elif runtime_engine == "firefox":
+                        browser = await playwright.firefox.launch(headless=headless)
+                    elif runtime_engine == "webkit":
+                        browser = await playwright.webkit.launch(headless=headless)
+                    else:
+                        raise ValueError(f"Unsupported browser engine: {browser_engine}")
+                    context = await browser.new_context(viewport={"width": width, "height": height})
 
-            await context.tracing.start(
-                screenshots=True,
-                snapshots=True,
-                sources=True,
-            )
-            trace_started = True
-            logger.info("NAS Playwright tracing started")
+                await context.tracing.start(
+                    screenshots=True,
+                    snapshots=True,
+                    sources=True,
+                )
+                trace_started = True
+                logger.info("NAS Playwright tracing started")
 
-            page = await context.new_page()
-            await page.goto(nas_login_url, wait_until="domcontentloaded")
+                page = await context.new_page()
+                await page.goto(nas_login_url, wait_until="domcontentloaded")
 
-            await login(
-                page=page,
-                login_values=login_values,
-                login_selectors=login_selectors,
-                logger=logger,
-            )
-
-            await _pause_after_login_if_enabled(page, pause_after_login, logger)
-
-            if process_key == "add_family":
-                from src.portals.nas.add_process.family_member.family_member_search import run_family_member_search
-                await run_family_member_search(
+                await login(
                     page=page,
-                    request_id=str(request_id),
-                    request_user_ids=request_user_ids,
-                    run_dir=run_dir,
+                    login_values=login_values,
+                    login_selectors=login_selectors,
                     logger=logger,
                 )
-                if use_database:
-                    result = build_nas_addition_census_file(
-                        request_id=str(request_id or ""),
-                        output_path=add_member_values["batch_member_file"],
-                        include_user_ids=request_user_ids or None,
+
+                await _pause_after_login_if_enabled(page, pause_after_login, logger)
+
+                if process_key == "add_family":
+                    from src.portals.nas.add_process.family_member.family_member_search import run_family_member_search
+                    await run_family_member_search(
+                        page=page,
+                        request_id=str(request_id),
+                        request_user_ids=request_user_ids,
+                        run_dir=run_dir,
                         logger=logger,
                     )
-                    logger.info(
-                        "NAS addition census ready after principal card lookups | "
-                        "Template=%s | Members=%s | Output=%s",
-                        result.template_path,
-                        result.members_count,
-                        result.output_path,
+                    if use_database:
+                        result = build_nas_addition_census_file(
+                            request_id=str(request_id or ""),
+                            output_path=add_member_values["batch_member_file"],
+                            include_user_ids=request_user_ids or None,
+                            logger=logger,
+                        )
+                        logger.info(
+                            "NAS addition census ready after principal card lookups | "
+                            "Template=%s | Members=%s | Output=%s",
+                            result.template_path,
+                            result.members_count,
+                            result.output_path,
+                        )
+
+                await open_new_member_page(
+                    page=page,
+                    selectors=new_button_selectors,
+                    logger=logger,
+                )
+
+                await open_request_dashboard_page(
+                    page=page,
+                    selectors=request_dashboard_selectors,
+                    process_key=process_key,
+                    logger=logger,
+                )
+
+                if process_key == "add_individual":
+                    await select_company_accordion(
+                        page=page,
+                        selectors=accordion_selectors,
+                        values=add_member_values,
+                        logger=logger,
                     )
+                    await select_sub_policy_add_member(
+                        page=page,
+                        selectors=accordion_selectors,
+                        values=add_member_values,
+                        logger=logger,
+                    )
+                elif process_key in {"add_batch", "add_family"}:
+                    bulk_result = await run_bulk_add_member(
+                        page=page,
+                        selectors=bulk_add_member_selectors,
+                        values=add_member_values,
+                        download_dir=run_dir,
+                        logger=logger,
+                    )
+                    skip_member_submit = bool(
+                        add_member_values.get("skip_member_submit", False)
+                    )
+                    success_process_data = _build_mail_process_data(
+                        request_id=request_id,
+                        policy_number=_resolve_policy_number(add_member_values),
+                        action_type=action_type,
+                        status=(
+                            "Test Review Completed"
+                            if skip_member_submit
+                            else "Addion Completed"
+                        ),
+                    )
+                    success_process_data["ProcessedMembers"] = bulk_result.processed_count
+                    success_process_data["SubmissionSkipped"] = skip_member_submit
+                    _send_nas_success_email(
+                        process_data=success_process_data,
+                        screenshot_paths=bulk_result.member_screenshots,
+                        logger=logger,
+                    )
+                elif process_key == "delete_bulk":
+                    delete_result = await run_bulk_delete_member(
+                        page=page,
+                        selectors=bulk_delete_member_selectors,
+                        values=add_member_values,
+                        download_dir=run_dir,
+                        logger=logger,
+                    )
+                    success_process_data = _build_mail_process_data(
+                        request_id=request_id,
+                        policy_number=_resolve_policy_number(add_member_values),
+                        action_type=portal_action_type,
+                        status="Deletion Completed",
+                    )
+                    success_process_data["UploadedFile"] = str(delete_result.uploaded_file)
+                    _send_nas_success_email(
+                        process_data=success_process_data,
+                        screenshot_paths=[
+                            path
+                            for path in [delete_result.evidence_screenshot]
+                            if path is not None
+                        ],
+                        logger=logger,
+                    )
+                return
 
-            await open_new_member_page(
-                page=page,
-                selectors=new_button_selectors,
-                logger=logger,
-            )
+            except Exception as exc:
+                if isinstance(exc, NasOtpNotReceivedError) and login_attempt < max_login_attempts:
+                    logger.warning(
+                        "NAS OTP was not received. Closing browser and retrying "
+                        "with a fresh login session | Attempt=%s/%s",
+                        login_attempt,
+                        max_login_attempts,
+                    )
+                    continue
 
-            await open_request_dashboard_page(
-                page=page,
-                selectors=request_dashboard_selectors,
-                process_key=process_key,
-                logger=logger,
-            )
-
-            if process_key == "add_individual":
-                await select_company_accordion(
-                    page=page,
-                    selectors=accordion_selectors,
-                    values=add_member_values,
-                    logger=logger,
-                )
-                await select_sub_policy_add_member(
-                    page=page,
-                    selectors=accordion_selectors,
-                    values=add_member_values,
-                    logger=logger,
-                )
-            elif process_key in {"add_batch", "add_family"}:
-                bulk_result = await run_bulk_add_member(
-                    page=page,
-                    selectors=bulk_add_member_selectors,
-                    values=add_member_values,
-                    download_dir=run_dir,
-                    logger=logger,
-                )
-                skip_member_submit = bool(
-                    add_member_values.get("skip_member_submit", False)
-                )
-                success_process_data = _build_mail_process_data(
-                    request_id=request_id,
-                    policy_number=_resolve_policy_number(add_member_values),
-                    action_type=action_type,
-                    status=(
-                        "Test Review Completed"
-                        if skip_member_submit
-                        else "Addion Completed"
-                    ),
-                )
-                success_process_data["ProcessedMembers"] = bulk_result.processed_count
-                success_process_data["SubmissionSkipped"] = skip_member_submit
-                _send_nas_success_email(
-                    process_data=success_process_data,
-                    screenshot_paths=bulk_result.member_screenshots,
-                    logger=logger,
-                )
-            elif process_key == "delete_bulk":
-                delete_result = await run_bulk_delete_member(
-                    page=page,
-                    selectors=bulk_delete_member_selectors,
-                    values=add_member_values,
-                    download_dir=run_dir,
-                    logger=logger,
-                )
-                success_process_data = _build_mail_process_data(
+                logger.error(f"NAS login flow failed: {exc}")
+                error_shots = []
+                if page is not None:
+                    try:
+                        error_shot = run_dir / f"nas_login_error_attempt_{login_attempt}.png"
+                        await page.screenshot(path=str(error_shot), full_page=True)
+                        logger.info(f"Saved NAS login error screenshot: {error_shot}")
+                        error_shots.append(error_shot)
+                    except Exception as shot_exc:
+                        logger.error(f"Failed to save NAS login error screenshot: {shot_exc}")
+                failure_process_data = _build_mail_process_data(
                     request_id=request_id,
                     policy_number=_resolve_policy_number(add_member_values),
                     action_type=portal_action_type,
-                    status="Deletion Completed",
+                    status=(
+                        "Validation Error"
+                        if isinstance(exc, NasBulkValidationDownloadError)
+                        else "Network or Loading Issue"
+                    ),
                 )
-                success_process_data["UploadedFile"] = str(delete_result.uploaded_file)
-                _send_nas_success_email(
-                    process_data=success_process_data,
-                    screenshot_paths=[
-                        path
-                        for path in [delete_result.evidence_screenshot]
-                        if path is not None
-                    ],
-                    logger=logger,
-                )
-
-        except Exception as exc:
-            logger.error(f"NAS login flow failed: {exc}")
-            error_shots = []
-            if page is not None:
-                try:
-                    error_shot = run_dir / "nas_login_error.png"
-                    await page.screenshot(path=str(error_shot), full_page=True)
-                    logger.info(f"Saved NAS login error screenshot: {error_shot}")
-                    error_shots.append(error_shot)
-                except Exception as shot_exc:
-                    logger.error(f"Failed to save NAS login error screenshot: {shot_exc}")
-            failure_process_data = _build_mail_process_data(
-                request_id=request_id,
-                policy_number=_resolve_policy_number(add_member_values),
-                action_type=portal_action_type,
-                status=(
-                    "Validation Error"
-                    if isinstance(exc, NasBulkValidationDownloadError)
-                    else "Network or Loading Issue"
-                ),
-            )
-            if isinstance(exc, NasBulkValidationDownloadError):
-                _send_nas_validation_error_email(
-                    process_data=failure_process_data,
-                    error_message=str(exc),
-                    downloaded_file=exc.downloaded_file,
-                    screenshot_path=error_shots[0] if error_shots else None,
-                    logger=logger,
-                )
-            else:
-                _send_nas_error_email(
-                    process_data=failure_process_data,
-                    error_message=str(exc),
-                    screenshot_paths=error_shots,
-                    logger=logger,
-                )
-            raise
-        finally:
-            if context is not None and trace_started:
-                trace_path = run_dir / "nas_playwright_trace.zip"
-                try:
-                    await context.tracing.stop(path=str(trace_path))
-                    logger.info(f"Saved NAS Playwright trace: {trace_path}")
-                except Exception as trace_exc:
-                    logger.error(f"Failed to save NAS Playwright trace: {trace_exc}")
-            if context is not None:
-                await context.close()
-            if browser is not None:
-                await browser.close()
+                if isinstance(exc, NasBulkValidationDownloadError):
+                    _send_nas_validation_error_email(
+                        process_data=failure_process_data,
+                        error_message=str(exc),
+                        downloaded_file=exc.downloaded_file,
+                        screenshot_path=error_shots[0] if error_shots else None,
+                        logger=logger,
+                    )
+                else:
+                    _send_nas_error_email(
+                        process_data=failure_process_data,
+                        error_message=str(exc),
+                        screenshot_paths=error_shots,
+                        logger=logger,
+                    )
+                raise
+            finally:
+                if context is not None and trace_started:
+                    trace_path = run_dir / f"nas_playwright_trace_attempt_{login_attempt}.zip"
+                    try:
+                        await context.tracing.stop(path=str(trace_path))
+                        logger.info(f"Saved NAS Playwright trace: {trace_path}")
+                    except Exception as trace_exc:
+                        logger.error(f"Failed to save NAS Playwright trace: {trace_exc}")
+                if context is not None:
+                    await context.close()
+                if browser is not None:
+                    await browser.close()
 
