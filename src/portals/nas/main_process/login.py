@@ -163,75 +163,29 @@ async def _submit_mfa_code(
     logger.info("NAS MFA Continue clicked")
 
 
-async def _click_resend_otp(
-    page: Page,
-    login_selectors: Dict[str, Any],
-    logger: logging.Logger,
-) -> datetime:
-    resend_selector = str(login_selectors.get("otp_resend_code") or "#resend-code")
-    resend = page.locator(resend_selector).first
-    try:
-        await resend.wait_for(state="visible", timeout=10000)
-        await resend.click()
-        logger.info("NAS OTP Resend clicked")
-    except PlaywrightTimeoutError as exc:
-        raise RuntimeError("NAS OTP was not received within 60 seconds and Resend was not visible") from exc
-
-    try:
-        await page.wait_for_load_state("domcontentloaded", timeout=10000)
-    except PlaywrightTimeoutError:
-        pass
-
-    return datetime.now(timezone.utc)
-
-
-async def _find_otp_with_resend(
-    page: Page,
-    login_selectors: Dict[str, Any],
+async def _find_otp_for_current_login(
     mail_config: MailConfig,
     login_submit_time: datetime,
     logger: logging.Logger,
 ) -> str:
-    wait_seconds = 60
-    max_attempts = 3
-    received_after = login_submit_time
-    attempt = 1
-
-    while attempt <= max_attempts:
-        try:
-            logger.info("Waiting for NAS OTP email. Attempt=%s TimeoutSeconds=%s", attempt, wait_seconds)
-            return await asyncio.to_thread(
-                find_latest_nas_otp,
-                mail_config,
-                received_after=received_after,
-                timeout_seconds=wait_seconds,
-                logger=logger,
-            )
-        except RuntimeError as exc:
-            logger.warning(
-                "NAS OTP not found on attempt %s. Resending OTP and retrying. Error: %s",
-                attempt,
-                exc,
-            )
-
-        if attempt >= max_attempts:
-            break
-
-        try:
-            received_after = await _click_resend_otp(page, login_selectors, logger)
-        except RuntimeError as exc:
-            logger.warning(
-                "NAS OTP resend was not available on attempt %s. Waiting another 60 seconds. Error: %s",
-                attempt,
-                exc,
-            )
-
-        attempt += 1
-
-    raise RuntimeError(
-        "NAS OTP was not received after 3 attempts. "
-        "The NAS portal may not be sending OTP emails. Login stopped and failure notification will be sent."
+    logger.info(
+        "Waiting for NAS OTP email for the current login session. TimeoutSeconds=%s",
+        mail_config.otp_poll_timeout_seconds,
     )
+    try:
+        return await asyncio.to_thread(
+            find_latest_nas_otp,
+            mail_config,
+            received_after=login_submit_time,
+            timeout_seconds=mail_config.otp_poll_timeout_seconds,
+            logger=logger,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "NAS OTP was not received for the current login session. "
+            "Login will stop without clicking Resend so the browser can close "
+            "and the existing retry process can start a fresh login."
+        ) from exc
 
 
 async def _handle_mfa_if_present(
@@ -244,9 +198,7 @@ async def _handle_mfa_if_present(
         return False
 
     mail_config = MailConfig.load()
-    otp_code = await _find_otp_with_resend(
-        page,
-        login_selectors,
+    otp_code = await _find_otp_for_current_login(
         mail_config,
         login_submit_time,
         logger,

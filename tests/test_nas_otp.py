@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from src.portals.nas.main_process.login import _find_otp_for_current_login
 from src.services.mail_service.outlook_mail_service import (
     _build_latest_unread_messages_url,
     extract_otp_from_message_text,
@@ -90,6 +94,33 @@ poll_interval_seconds = 3
         self.assertEqual("NAS OTP Custom", config.otp_folder)
         self.assertEqual(120, config.otp_poll_timeout_seconds)
         self.assertEqual(3, config.otp_poll_interval_seconds)
+
+
+class NasOtpLoginFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_otp_timeout_raises_without_resend_retry(self) -> None:
+        config = MailConfig(
+            client_id="client-id",
+            tenant_id="tenant-id",
+            token_cache_path=Path("token.json"),
+            recipients=("test@example.com",),
+            cc=(),
+            bcc=(),
+            otp_poll_timeout_seconds=1,
+            otp_poll_interval_seconds=1,
+        )
+
+        with patch(
+            "src.portals.nas.main_process.login.find_latest_nas_otp",
+            side_effect=RuntimeError("No fresh NAS OTP email found"),
+        ) as find_latest:
+            with self.assertRaisesRegex(RuntimeError, "without clicking Resend"):
+                await _find_otp_for_current_login(
+                    mail_config=config,
+                    login_submit_time=datetime.now(timezone.utc),
+                    logger=logging.getLogger("test_nas_otp"),
+                )
+
+        self.assertEqual(1, find_latest.call_count)
 
 
 if __name__ == "__main__":
