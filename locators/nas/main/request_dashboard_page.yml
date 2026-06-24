@@ -2,4 +2,7 @@ request_dashboard_page:
   add_member_button: "#cphNasHrMasterBody_btnAddMember"
   add_bulk_member_button: "#cphNasHrMasterBody_btnAddBulkMember"
   add_family_member_button: "#cphNasHrMasterBody_btnAddFamilyMember"
+  cancel_bulk_member_button: "#cphNasHrMasterBody_btnCancelBulkMember"
   accordion_header: "a.acchdr"
+  import_file_input: "#fuExcelMembers"
+  import_choose_file_button: "span.buttonText"

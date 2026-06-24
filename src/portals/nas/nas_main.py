@@ -12,6 +12,9 @@ from src.portals.nas.add_process.bulk_member.bulk_add_member import (
     resolve_payer_name_from_email_filename,
     run_bulk_add_member,
 )
+from src.portals.nas.delete_process.bulk_member.bulk_delete_member import (
+    run_bulk_delete_member,
+)
 from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
 from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
 from src.portals.nas.main_process.login import login
@@ -115,10 +118,7 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
     if request_upper == "DELETE" and action_upper in {"INDIVIDUAL", "MANUAL"}:
         return "delete_manual"
 
-    if request_upper == "DELETE" and action_upper == "BATCH":
-        return "delete_batch"
-
-    if request_upper == "DELETE" and action_upper == "BULK":
+    if request_upper == "DELETE" and action_upper in {"BATCH", "BULK"}:
         return "delete_bulk"
 
     raise NotImplementedError(
@@ -330,6 +330,10 @@ async def run(
         "locators/nas/add_process/bulk_add_member.yml",
         section="bulk_add_member",
     )
+    bulk_delete_member_selectors = load_section_from_yaml(
+        "locators/nas/delete_process/bulk_delete_member.yml",
+        section="bulk_delete_member",
+    )
     login_values = load_json_file("config/json_values/nas_login.json")
     add_member_values = load_json_file("config/json_values/nas_add_member.json")
     login_values["username"] = os.getenv("NAS_USERNAME", login_values.get("username", ""))
@@ -373,11 +377,13 @@ async def run(
             f"RequestId={db_result.request_id} | ActionType={action_type} | ProcessKey={process_key}"
         )
 
-    if process_key in {"add_batch", "delete_batch", "delete_bulk", "add_family"}:
-        upload_paths = get_upload_paths("NAS", request_type, action_type)
+    portal_action_type = "BULK" if process_key == "delete_bulk" else action_type
+
+    if process_key in {"add_batch", "delete_bulk", "add_family"}:
+        upload_paths = get_upload_paths("NAS", request_type, portal_action_type)
         if not upload_paths:
             raise ValueError(
-                f"NAS upload path mapping is missing for {request_type} {action_type}"
+                f"NAS upload path mapping is missing for {request_type} {portal_action_type}"
             )
 
         if process_key in {"add_batch", "add_family"}:
@@ -494,20 +500,27 @@ async def run(
                         "NAS documents were mapped to the external Excel override "
                         "using the active request's database member order"
                     )
-        elif use_database:
-            result = build_nas_deletion_census_file(
-                request_id=str(request_id or ""),
-                output_path=upload_paths["batch_delete_member_file"],
-                include_user_ids=request_user_ids or None,
-                logger=logger,
-            )
-            logger.info(
-                "NAS deletion census ready before portal start | "
-                "Template=%s | Members=%s | Output=%s",
-                result.template_path,
-                result.members_count,
-                result.output_path,
-            )
+        elif process_key == "delete_bulk":
+            env_delete_file = str(os.getenv("NAS_BULK_DELETE_MEMBER_FILE") or "").strip()
+            if env_delete_file:
+                upload_paths["batch_delete_member_file"] = env_delete_file
+                logger.info("Using NAS_BULK_DELETE_MEMBER_FILE override: %s", env_delete_file)
+            elif use_database:
+                result = build_nas_deletion_census_file(
+                    request_id=str(request_id or ""),
+                    output_path=upload_paths["batch_delete_member_file"],
+                    include_user_ids=request_user_ids or None,
+                    logger=logger,
+                )
+                logger.info(
+                    "NAS deletion census ready before portal start | "
+                    "Template=%s | Members=%s | Output=%s",
+                    result.template_path,
+                    result.members_count,
+                    result.output_path,
+                )
+
+            add_member_values = _merge_values(add_member_values, upload_paths)
 
     paths_config = config.get("paths", {}) if isinstance(config, dict) else {}
     nas_login_url = str(paths_config.get("nas_login_url") or DEFAULT_NAS_LOGIN_URL).strip()
@@ -537,7 +550,7 @@ async def run(
         "Starting NAS login flow | RequestId=%s | RequestType=%s | ActionType=%s",
         request_id or "-",
         request_type,
-        action_type,
+        portal_action_type,
     )
     logger.info(f"Opening NAS login URL: {nas_login_url}")
 
@@ -680,6 +693,30 @@ async def run(
                     screenshot_paths=bulk_result.member_screenshots,
                     logger=logger,
                 )
+            elif process_key == "delete_bulk":
+                delete_result = await run_bulk_delete_member(
+                    page=page,
+                    selectors=bulk_delete_member_selectors,
+                    values=add_member_values,
+                    download_dir=run_dir,
+                    logger=logger,
+                )
+                success_process_data = _build_mail_process_data(
+                    request_id=request_id,
+                    policy_number=_resolve_policy_number(add_member_values),
+                    action_type=portal_action_type,
+                    status="Deletion Completed",
+                )
+                success_process_data["UploadedFile"] = str(delete_result.uploaded_file)
+                _send_nas_success_email(
+                    process_data=success_process_data,
+                    screenshot_paths=[
+                        path
+                        for path in [delete_result.evidence_screenshot]
+                        if path is not None
+                    ],
+                    logger=logger,
+                )
 
         except Exception as exc:
             logger.error(f"NAS login flow failed: {exc}")
@@ -695,7 +732,7 @@ async def run(
             failure_process_data = _build_mail_process_data(
                 request_id=request_id,
                 policy_number=_resolve_policy_number(add_member_values),
-                action_type=action_type,
+                action_type=portal_action_type,
                 status=(
                     "Validation Error"
                     if isinstance(exc, NasBulkValidationDownloadError)

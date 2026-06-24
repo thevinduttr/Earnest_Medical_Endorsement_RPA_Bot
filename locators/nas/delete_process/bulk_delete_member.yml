@@ -1,0 +1,5 @@
+bulk_delete_member:
+  excel_file_input: "#fuExcelMembers"
+  import_save_button: "#cphNasHrMasterBody_btnImportEmployees"
+  confirmation_dialog: "div.jconfirm"
+  confirmation_close_button: "div.jconfirm button"

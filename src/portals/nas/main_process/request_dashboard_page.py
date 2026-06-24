@@ -34,6 +34,14 @@ def _resolve_dashboard_action(process_key: str) -> Dict[str, Any]:
             "next_label": None,
         }
 
+    if process == "delete_bulk":
+        return {
+            "key": "cancel_bulk_member_button",
+            "label": "NAS Cancel Bulk Members",
+            "next_key": "import_choose_file_button",
+            "next_label": "NAS Bulk Delete Import",
+        }
+
     raise ValueError(f"Unsupported NAS request dashboard process: {process_key}")
 
 
