@@ -16,6 +16,10 @@ class NasOtpNotReceivedError(RuntimeError):
     """Raised when the NAS OTP email is not received for the current login."""
 
 
+def _current_login_otp_timeout_seconds(mail_config: MailConfig) -> int:
+    return max(1, min(int(mail_config.otp_poll_timeout_seconds), 60))
+
+
 async def _is_mfa_page_visible(
     page: Page,
     login_selectors: Dict[str, Any],
@@ -172,16 +176,17 @@ async def _find_otp_for_current_login(
     login_submit_time: datetime,
     logger: logging.Logger,
 ) -> str:
+    timeout_seconds = _current_login_otp_timeout_seconds(mail_config)
     logger.info(
         "Waiting for NAS OTP email for the current login session. TimeoutSeconds=%s",
-        mail_config.otp_poll_timeout_seconds,
+        timeout_seconds,
     )
     try:
         return await asyncio.to_thread(
             find_latest_nas_otp,
             mail_config,
             received_after=login_submit_time,
-            timeout_seconds=mail_config.otp_poll_timeout_seconds,
+            timeout_seconds=timeout_seconds,
             logger=logger,
         )
     except RuntimeError as exc:
@@ -190,6 +195,23 @@ async def _find_otp_for_current_login(
             "Login will stop without clicking Resend so the browser can close "
             "and the existing retry process can start a fresh login."
         ) from exc
+
+
+async def _wait_for_manual_mfa_completion(
+    page: Page,
+    logger: logging.Logger,
+    timeout_seconds: int,
+) -> bool:
+    try:
+        await page.wait_for_url(
+            lambda url: "/Accounts/login" not in str(url)
+            and "/Accounts/MFALogin" not in str(url),
+            timeout=max(1, timeout_seconds) * 1000,
+        )
+        logger.info("NAS MFA completed manually; continuing automation")
+        return True
+    except PlaywrightTimeoutError:
+        return False
 
 
 async def _handle_mfa_if_present(
@@ -202,15 +224,64 @@ async def _handle_mfa_if_present(
         return False
 
     mail_config = MailConfig.load()
-    otp_code = await _find_otp_for_current_login(
-        mail_config,
-        login_submit_time,
-        logger,
+    timeout_seconds = _current_login_otp_timeout_seconds(mail_config)
+    otp_task = asyncio.create_task(
+        _find_otp_for_current_login(
+            mail_config,
+            login_submit_time,
+            logger,
+        )
     )
-    await _submit_mfa_code(page, login_selectors, otp_code, logger)
-    if not await _wait_for_nas_login_complete(page, logger):
-        raise RuntimeError("NAS MFA submitted but portal redirect was not detected")
-    return True
+    manual_task = asyncio.create_task(
+        _wait_for_manual_mfa_completion(
+            page,
+            logger,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    pending = {otp_task, manual_task}
+    otp_error: NasOtpNotReceivedError | None = None
+    try:
+        while pending:
+            done, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                if task is manual_task:
+                    if task.result():
+                        return True
+                    continue
+
+                try:
+                    otp_code = task.result()
+                except NasOtpNotReceivedError as exc:
+                    otp_error = exc
+                    continue
+
+                if await _wait_for_manual_mfa_completion(
+                    page,
+                    logger,
+                    timeout_seconds=1,
+                ):
+                    return True
+
+                await _submit_mfa_code(page, login_selectors, otp_code, logger)
+                if not await _wait_for_nas_login_complete(page, logger):
+                    raise RuntimeError("NAS MFA submitted but portal redirect was not detected")
+                return True
+    finally:
+        for task in (otp_task, manual_task):
+            if not task.done():
+                task.cancel()
+
+    if otp_error is not None:
+        raise otp_error
+    raise NasOtpNotReceivedError(
+        "NAS OTP was not received and manual MFA completion was not detected "
+        "for the current login session."
+    )
 
 
 async def login(
