@@ -143,8 +143,7 @@ class NasOtpLoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_manual_mfa_completion_can_continue_automation(self) -> None:
         class ManualCompletedPage:
-            async def wait_for_url(self, *_args, **_kwargs):
-                return None
+            url = "https://ntouch.nnhs.ae/BrokerConnect/Distributors/Dashboard.aspx"
 
         completed = await _wait_for_manual_mfa_completion(
             ManualCompletedPage(),

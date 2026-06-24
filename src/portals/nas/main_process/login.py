@@ -202,16 +202,27 @@ async def _wait_for_manual_mfa_completion(
     logger: logging.Logger,
     timeout_seconds: int,
 ) -> bool:
-    try:
-        await page.wait_for_url(
-            lambda url: "/Accounts/login" not in str(url)
-            and "/Accounts/MFALogin" not in str(url),
-            timeout=max(1, timeout_seconds) * 1000,
-        )
-        logger.info("NAS MFA completed manually; continuing automation")
-        return True
-    except PlaywrightTimeoutError:
-        return False
+    logger.info(
+        "Watching for manual NAS MFA completion. TimeoutSeconds=%s",
+        timeout_seconds,
+    )
+    deadline = asyncio.get_running_loop().time() + max(1, timeout_seconds)
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            current_url = str(page.url or "")
+            if "/Accounts/login" not in current_url and "/Accounts/MFALogin" not in current_url:
+                logger.info(
+                    "NAS MFA completed manually; continuing automation | Url=%s",
+                    current_url,
+                )
+                return True
+        except Exception:
+            pass
+
+        await asyncio.sleep(0.5)
+
+    logger.warning("Manual NAS MFA completion was not detected within timeout")
+    return False
 
 
 async def _handle_mfa_if_present(
