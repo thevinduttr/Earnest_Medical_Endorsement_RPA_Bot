@@ -58,7 +58,7 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           Write-Host "[$(Get-Date -Format o)] Changing to project directory..."
-          $projectPath = "C:\Users\opc\Desktop\Portal_System"
+          $projectPath = "C:\Users\vmadmin\Desktop\Portal_System"
           $repoUrl = "https://github.com/thevinduttr/Earnest_Medical_Endorsement_RPA_Bot.git"
 
           $git = Get-Command git.exe -ErrorAction SilentlyContinue
