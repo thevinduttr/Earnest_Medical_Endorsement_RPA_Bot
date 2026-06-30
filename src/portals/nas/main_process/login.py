@@ -7,7 +7,7 @@ import logging
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from src.services.mail_service.outlook_mail_service import find_latest_nas_otp
+from src.services.mail_service.nas_otp_service import find_latest_nas_otp
 from src.utils.mail_config import MailConfig
 from src.utils.support_functions import run_actions
 
@@ -197,34 +197,6 @@ async def _find_otp_for_current_login(
         ) from exc
 
 
-async def _wait_for_manual_mfa_completion(
-    page: Page,
-    logger: logging.Logger,
-    timeout_seconds: int,
-) -> bool:
-    logger.info(
-        "Watching for manual NAS MFA completion. TimeoutSeconds=%s",
-        timeout_seconds,
-    )
-    deadline = asyncio.get_running_loop().time() + max(1, timeout_seconds)
-    while asyncio.get_running_loop().time() < deadline:
-        try:
-            current_url = str(page.url or "")
-            if "/Accounts/login" not in current_url and "/Accounts/MFALogin" not in current_url:
-                logger.info(
-                    "NAS MFA completed manually; continuing automation | Url=%s",
-                    current_url,
-                )
-                return True
-        except Exception:
-            pass
-
-        await asyncio.sleep(0.5)
-
-    logger.warning("Manual NAS MFA completion was not detected within timeout")
-    return False
-
-
 async def _handle_mfa_if_present(
     page: Page,
     login_selectors: Dict[str, Any],
@@ -235,64 +207,15 @@ async def _handle_mfa_if_present(
         return False
 
     mail_config = MailConfig.load()
-    timeout_seconds = _current_login_otp_timeout_seconds(mail_config)
-    otp_task = asyncio.create_task(
-        _find_otp_for_current_login(
-            mail_config,
-            login_submit_time,
-            logger,
-        )
+    otp_code = await _find_otp_for_current_login(
+        mail_config,
+        login_submit_time,
+        logger,
     )
-    manual_task = asyncio.create_task(
-        _wait_for_manual_mfa_completion(
-            page,
-            logger,
-            timeout_seconds=timeout_seconds,
-        )
-    )
-
-    pending = {otp_task, manual_task}
-    otp_error: NasOtpNotReceivedError | None = None
-    try:
-        while pending:
-            done, pending = await asyncio.wait(
-                pending,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in done:
-                if task is manual_task:
-                    if task.result():
-                        return True
-                    continue
-
-                try:
-                    otp_code = task.result()
-                except NasOtpNotReceivedError as exc:
-                    otp_error = exc
-                    continue
-
-                if await _wait_for_manual_mfa_completion(
-                    page,
-                    logger,
-                    timeout_seconds=1,
-                ):
-                    return True
-
-                await _submit_mfa_code(page, login_selectors, otp_code, logger)
-                if not await _wait_for_nas_login_complete(page, logger):
-                    raise RuntimeError("NAS MFA submitted but portal redirect was not detected")
-                return True
-    finally:
-        for task in (otp_task, manual_task):
-            if not task.done():
-                task.cancel()
-
-    if otp_error is not None:
-        raise otp_error
-    raise NasOtpNotReceivedError(
-        "NAS OTP was not received and manual MFA completion was not detected "
-        "for the current login session."
-    )
+    await _submit_mfa_code(page, login_selectors, otp_code, logger)
+    if not await _wait_for_nas_login_complete(page, logger):
+        raise RuntimeError("NAS MFA submitted but portal redirect was not detected")
+    return True
 
 
 async def login(

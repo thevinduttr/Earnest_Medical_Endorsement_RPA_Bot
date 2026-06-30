@@ -50,6 +50,8 @@ config/env/
 config/*.ini
 config/env/*.env
 *outlook_token_cache.json
+config/gmail_token.json
+config/gmail_token*.json
 
 # Security sensitive files
 data/login.json

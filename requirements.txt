@@ -8,3 +8,6 @@ pywin32
 Pillow
 requests
 msal
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2

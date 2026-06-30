@@ -10,11 +10,15 @@ from unittest.mock import patch
 from src.portals.nas.main_process.login import (
     _current_login_otp_timeout_seconds,
     _find_otp_for_current_login,
-    _wait_for_manual_mfa_completion,
 )
 from src.services.mail_service.outlook_mail_service import (
     _build_latest_unread_messages_url,
     extract_otp_from_message_text,
+)
+from src.services.mail_service.nas_otp_service import (
+    NasOtpProviderConfig,
+    load_nas_otp_provider_config,
+    find_latest_nas_otp,
 )
 from src.utils.mail_config import MailConfig
 
@@ -99,6 +103,77 @@ poll_interval_seconds = 3
         self.assertEqual(120, config.otp_poll_timeout_seconds)
         self.assertEqual(3, config.otp_poll_interval_seconds)
 
+    def test_base_yaml_can_select_gmail_otp_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "base.yml"
+            credentials_path = Path(temp_dir) / "credentials.json"
+            token_path = Path(temp_dir) / "gmail_token.json"
+            config_path.write_text(
+                f"""
+nas_otp:
+  use_gmail: true
+  gmail:
+    credentials_path: "{credentials_path.as_posix()}"
+    token_path: "{token_path.as_posix()}"
+    folder_name: "INBOX"
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_nas_otp_provider_config(config_path)
+
+        self.assertTrue(config.use_gmail)
+        self.assertEqual(credentials_path.resolve(), config.gmail_credentials_path)
+        self.assertEqual(token_path.resolve(), config.gmail_token_path)
+        self.assertEqual("INBOX", config.gmail_folder_name)
+
+    def test_otp_router_uses_outlook_by_default(self) -> None:
+        config = MailConfig(
+            client_id="client-id",
+            tenant_id="tenant-id",
+            token_cache_path=Path("token.json"),
+            recipients=("test@example.com",),
+            cc=(),
+            bcc=(),
+        )
+
+        with patch(
+            "src.services.mail_service.nas_otp_service.find_latest_outlook_nas_otp",
+            return_value="123456",
+        ) as outlook_reader:
+            result = find_latest_nas_otp(
+                config,
+                provider_config=NasOtpProviderConfig(use_gmail=False),
+            )
+
+        self.assertEqual("123456", result)
+        self.assertEqual(1, outlook_reader.call_count)
+
+    def test_otp_router_uses_gmail_when_enabled(self) -> None:
+        config = MailConfig(
+            client_id="client-id",
+            tenant_id="tenant-id",
+            token_cache_path=Path("token.json"),
+            recipients=("test@example.com",),
+            cc=(),
+            bcc=(),
+        )
+        provider_config = NasOtpProviderConfig(
+            use_gmail=True,
+            gmail_credentials_path=Path("credentials.json"),
+            gmail_token_path=Path("token.json"),
+            gmail_folder_name="INBOX",
+        )
+
+        with patch(
+            "src.services.mail_service.nas_otp_service.find_latest_gmail_nas_otp",
+            return_value="654321",
+        ) as gmail_reader:
+            result = find_latest_nas_otp(config, provider_config=provider_config)
+
+        self.assertEqual("654321", result)
+        self.assertEqual(1, gmail_reader.call_count)
+
 
 class NasOtpLoginFlowTests(unittest.IsolatedAsyncioTestCase):
     def test_current_login_otp_timeout_is_capped_at_60_seconds(self) -> None:
@@ -140,19 +215,6 @@ class NasOtpLoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, find_latest.call_count)
         self.assertEqual(1, find_latest.call_args.kwargs["timeout_seconds"])
-
-    async def test_manual_mfa_completion_can_continue_automation(self) -> None:
-        class ManualCompletedPage:
-            url = "https://ntouch.nnhs.ae/BrokerConnect/Distributors/Dashboard.aspx"
-
-        completed = await _wait_for_manual_mfa_completion(
-            ManualCompletedPage(),
-            logger=logging.getLogger("test_nas_otp"),
-            timeout_seconds=60,
-        )
-
-        self.assertTrue(completed)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,3 +26,11 @@ worker:
   loop_sleep_seconds: 0.2
   clear_attachments_each_cycle: true
 
+nas_otp:
+  # false keeps the existing Outlook OTP reader. true reads NAS OTP from Gmail.
+  use_gmail: true
+  gmail:
+    credentials_path: "config/env/client_secret_315088022352-d68sdbnbiji2ql4811spnf2d49llffdr.apps.googleusercontent.com.json"
+    token_path: "config/gmail_token.json"
+    folder_name: "Spam"
+
