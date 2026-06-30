@@ -15,8 +15,6 @@ from src.portals.nas.add_process.bulk_member.bulk_add_member import (
 from src.portals.nas.delete_process.bulk_member.bulk_delete_member import (
     run_bulk_delete_member,
 )
-from src.portals.nas.add_process.member.master_contract_page import select_company_accordion
-from src.portals.nas.add_process.member.sub_policy_page import select_sub_policy_add_member
 from src.portals.nas.main_process.login import NasOtpNotReceivedError, login
 from src.services.mail_service.outlook_mail_service import send_outlook_email
 from src.services.mail_service.sukoon_email_templates import (
@@ -116,7 +114,7 @@ def _resolve_process_key(request_type: str, action_type: str) -> str:
         return "add_family"
 
     if request_upper == "DELETE" and action_upper in {"INDIVIDUAL", "MANUAL"}:
-        return "delete_manual"
+        return "delete_bulk"
 
     if request_upper == "DELETE" and action_upper in {"BATCH", "BULK"}:
         return "delete_bulk"
@@ -377,25 +375,29 @@ async def run(
             f"RequestId={db_result.request_id} | ActionType={action_type} | ProcessKey={process_key}"
         )
 
-    portal_action_type = "BULK" if process_key == "delete_bulk" else action_type
+    add_bulk_processes = {"add_individual", "add_batch", "add_family"}
+    portal_action_type = "BULK" if process_key in {*add_bulk_processes, "delete_bulk"} else action_type
 
-    if process_key in {"add_batch", "delete_bulk", "add_family"}:
+    if process_key in {*add_bulk_processes, "delete_bulk"}:
         upload_paths = get_upload_paths("NAS", request_type, portal_action_type)
         if not upload_paths:
             raise ValueError(
                 f"NAS upload path mapping is missing for {request_type} {portal_action_type}"
             )
 
-        if process_key in {"add_batch", "add_family"}:
+        if process_key in add_bulk_processes:
+            addition_user_ids = request_user_ids or (
+                [str(user_id).strip()] if str(user_id or "").strip() else None
+            )
             env_bulk_file = str(os.getenv("NAS_BULK_MEMBER_FILE") or "").strip()
             if env_bulk_file:
                 upload_paths["batch_member_file"] = env_bulk_file
                 logger.info("Using NAS_BULK_MEMBER_FILE override: %s", env_bulk_file)
-            elif use_database and process_key == "add_batch":
+            elif use_database and process_key in {"add_individual", "add_batch"}:
                 result = build_nas_addition_census_file(
                     request_id=str(request_id or ""),
                     output_path=upload_paths["batch_member_file"],
-                    include_user_ids=request_user_ids or None,
+                    include_user_ids=addition_user_ids,
                     logger=logger,
                 )
                 logger.info(
@@ -472,14 +474,14 @@ async def run(
                     skip_member_submit,
                 )
 
-            if use_database and request_id and request_user_ids:
+            if use_database and request_id and addition_user_ids:
                 document_root = (
                     Path("data/attachments/samples/nas/add/batch/member_documents")
                     .resolve()
                 )
                 document_preparation = prepare_nas_member_documents(
                     request_id=str(request_id),
-                    user_ids=request_user_ids,
+                    user_ids=addition_user_ids,
                     destination_root=document_root,
                     logger=logger,
                 )
@@ -661,20 +663,7 @@ async def run(
                     logger=logger,
                 )
 
-                if process_key == "add_individual":
-                    await select_company_accordion(
-                        page=page,
-                        selectors=accordion_selectors,
-                        values=add_member_values,
-                        logger=logger,
-                    )
-                    await select_sub_policy_add_member(
-                        page=page,
-                        selectors=accordion_selectors,
-                        values=add_member_values,
-                        logger=logger,
-                    )
-                elif process_key in {"add_batch", "add_family"}:
+                if process_key in add_bulk_processes:
                     bulk_result = await run_bulk_add_member(
                         page=page,
                         selectors=bulk_add_member_selectors,

@@ -12,10 +12,10 @@ def _resolve_dashboard_action(process_key: str) -> Dict[str, Any]:
     process = str(process_key or "").strip().lower()
     if process == "add_individual":
         return {
-            "key": "add_member_button",
-            "label": "NAS Add Member",
-            "next_key": "accordion_header",
-            "next_label": "NAS Company Accordion",
+            "key": "add_bulk_member_button",
+            "label": "NAS Add Bulk Members",
+            "next_key": None,
+            "next_label": None,
         }
 
     if process == "add_batch":

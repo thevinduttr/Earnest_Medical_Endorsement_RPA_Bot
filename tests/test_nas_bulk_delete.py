@@ -17,12 +17,23 @@ class NasBulkDeleteRoutingTests(unittest.TestCase):
     def test_delete_batch_input_is_normalized_to_bulk_process(self) -> None:
         self.assertEqual("delete_bulk", _resolve_process_key("DELETE", "BATCH"))
 
+    def test_delete_individual_input_is_normalized_to_bulk_process(self) -> None:
+        self.assertEqual("delete_bulk", _resolve_process_key("DELETE", "INDIVIDUAL"))
+        self.assertEqual("delete_bulk", _resolve_process_key("DELETE", "MANUAL"))
+
     def test_delete_bulk_uses_cancel_bulk_members_dashboard_action(self) -> None:
         action = _resolve_dashboard_action("delete_bulk")
 
         self.assertEqual("cancel_bulk_member_button", action["key"])
         self.assertEqual("NAS Cancel Bulk Members", action["label"])
         self.assertEqual("import_choose_file_button", action["next_key"])
+
+    def test_add_individual_uses_bulk_members_dashboard_action(self) -> None:
+        action = _resolve_dashboard_action("add_individual")
+
+        self.assertEqual("add_bulk_member_button", action["key"])
+        self.assertEqual("NAS Add Bulk Members", action["label"])
+        self.assertIsNone(action["next_key"])
 
     def test_delete_batch_dashboard_process_is_not_supported_separately(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported NAS request dashboard process"):
