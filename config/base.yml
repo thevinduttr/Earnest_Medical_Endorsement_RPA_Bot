@@ -32,5 +32,5 @@ nas_otp:
   gmail:
     credentials_path: "config/env/client_secret_315088022352-d68sdbnbiji2ql4811spnf2d49llffdr.apps.googleusercontent.com.json"
     token_path: "config/gmail_token.json"
-    folder_name: "Spam"
+    folder_name: "SPAM"
 

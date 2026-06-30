@@ -11,6 +11,18 @@ from src.services.mail_service.outlook_mail_service import extract_otp_from_mess
 
 
 GMAIL_READONLY_SCOPE = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_SYSTEM_LABEL_ALIASES = {
+    "inbox": "INBOX",
+    "spam": "SPAM",
+    "junk": "SPAM",
+    "trash": "TRASH",
+    "bin": "TRASH",
+    "sent": "SENT",
+    "draft": "DRAFT",
+    "drafts": "DRAFT",
+    "important": "IMPORTANT",
+    "starred": "STARRED",
+}
 
 
 def _normalize_since(since: datetime | None) -> datetime | None:
@@ -83,8 +95,14 @@ def _headers_text(payload: dict[str, Any]) -> str:
     )
 
 
-def _list_unread_messages(service: Any, label_name: str) -> list[dict[str, Any]]:
+def _normalize_gmail_label_name(label_name: str | None) -> str:
     label = str(label_name or "INBOX").strip() or "INBOX"
+    normalized = label.lower().replace("[gmail]/", "").replace("[googlemail]/", "")
+    return GMAIL_SYSTEM_LABEL_ALIASES.get(normalized, label)
+
+
+def _list_unread_messages(service: Any, label_name: str) -> list[dict[str, Any]]:
+    label = _normalize_gmail_label_name(label_name)
     response = (
         service.users()
         .messages()
@@ -114,13 +132,14 @@ def find_latest_gmail_nas_otp(
     logger: Optional[logging.Logger] = None,
 ) -> str:
     service = _gmail_service(credentials_path, token_path)
+    target_folder = _normalize_gmail_label_name(folder_name)
     deadline = time.monotonic() + max(1, int(timeout_seconds))
     interval_value = max(1, int(poll_interval_seconds))
     received_after_utc = _normalize_since(received_after)
     last_seen_received_at = None
 
     while time.monotonic() < deadline:
-        for summary in _list_unread_messages(service, folder_name):
+        for summary in _list_unread_messages(service, target_folder):
             message_id = str(summary.get("id") or "")
             if not message_id:
                 continue
@@ -140,13 +159,13 @@ def find_latest_gmail_nas_otp(
             )
             if otp:
                 if logger:
-                    logger.info("NAS OTP found in Gmail label '%s'", folder_name)
+                    logger.info("NAS OTP found in Gmail label '%s'", target_folder)
                 return otp
 
         time.sleep(interval_value)
 
     detail = f" Last seen internalDate={last_seen_received_at}." if last_seen_received_at else ""
     raise RuntimeError(
-        f"No fresh NAS OTP email found in Gmail label '{folder_name}' "
+        f"No fresh NAS OTP email found in Gmail label '{target_folder}' "
         f"within {int(timeout_seconds)} seconds.{detail}"
     )

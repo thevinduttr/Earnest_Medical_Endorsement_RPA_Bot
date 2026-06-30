@@ -20,6 +20,7 @@ from src.services.mail_service.nas_otp_service import (
     load_nas_otp_provider_config,
     find_latest_nas_otp,
 )
+from src.services.mail_service.gmail_otp_service import _normalize_gmail_label_name
 from src.utils.mail_config import MailConfig
 
 
@@ -53,6 +54,11 @@ class NasOtpExtractionTests(unittest.TestCase):
         self.assertIn("$filter=isRead%20eq%20false", url)
         self.assertIn("$orderby=receivedDateTime%20desc", url)
         self.assertIn("isRead", url)
+
+    def test_gmail_spam_label_is_normalized_for_api(self) -> None:
+        self.assertEqual("SPAM", _normalize_gmail_label_name("Spam"))
+        self.assertEqual("SPAM", _normalize_gmail_label_name("spam"))
+        self.assertEqual("SPAM", _normalize_gmail_label_name("[Gmail]/Spam"))
 
 
 class MailConfigOtpTests(unittest.TestCase):
