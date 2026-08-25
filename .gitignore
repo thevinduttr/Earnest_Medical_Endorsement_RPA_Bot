@@ -26,6 +26,8 @@ data/outputs/error_screenshots/
 data/outputs/comparison/
 data/attachments/
 data/login.json
+data/browser_profiles/*
+data/credentials/*
 
 # Playwright / browser test artifacts
 playwright-report/
@@ -64,3 +66,4 @@ config/secrets/
 # Misc
 *.pid
 *.seed
+config/gmail_token.json

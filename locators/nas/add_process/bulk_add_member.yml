@@ -1,0 +1,11 @@
+bulk_add_member:
+  payer_accordion: "a.acchdr"
+  policy_filter: "div.subpolicy input"
+  policy_card: "div.card"
+  policy_contract_link: "h5.card-title a, .card-header a"
+  upload_members_button: "[id*=\"_btnUploadMembers1_\"]"
+  excel_file_input: "#fuExcelMembers"
+  import_save_button: "#cphNasHrMasterBody_btnImportEmployees"
+  member_links: "[id^=\"cphNasHrMasterBody_rptReqMembers_lnkRequestMemberName_\"]"
+  timeline_next_button: "#cphNasHrMasterBody_btnTimeLineNext"
+  timeline_submit_button: "#cphNasHrMasterBody_btnTimeLineSubmit, [id$=\"btnTimeLineSubmit\"], input[type=\"submit\"][value=\"Submit\"], button:has-text(\"Submit\")"

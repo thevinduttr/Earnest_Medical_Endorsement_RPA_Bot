@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.portals.sukoon.sukoon_main import InvalidMembersMappedError, run as run_sukoon
+from src.portals.nas.nas_main import run as run_nas_portal
 from src.services.db_service.sukoon_member_data_loader import load_process_selector_by_request_id
 from src.services.db_service.sukoon_preportal_processor import (
 	ClaimedRequest,
@@ -241,16 +242,49 @@ async def _process_sukoon_claim(
 	)
 
 
-def _process_nas_claim(*, request_id: str, user_ids: list[str], logger: logging.Logger) -> None:
-	reason = "NAS portal processing is not implemented in this repository"
-	update_portal_status_for_users(
+async def _process_nas_claim(
+	*,
+	request_id: str,
+	request_type: str,
+	action_type: str,
+	user_ids: list[str],
+	logger: logging.Logger,
+) -> None:
+	if action_type == "INDIVIDUAL":
+		for user_id in user_ids:
+			try:
+				await run_nas_portal(
+					request_type=request_type,
+					action_type=action_type,
+					request_id=request_id,
+					user_id=user_id,
+					request_user_ids=[user_id],
+					use_database=True,
+				)
+			except Exception as exc:
+				logger.exception(
+					"NAS individual processing failed | RequestId=%s | UserId=%s | Error=%s",
+					request_id,
+					user_id,
+					exc,
+				)
+				update_portal_status_for_users(
+					request_id=request_id,
+					user_ids=[user_id],
+					status="FAILED",
+					failure_reason=str(exc),
+					logger=logger,
+				)
+		return
+
+	await run_nas_portal(
+		request_type=request_type,
+		action_type=action_type,
 		request_id=request_id,
-		user_ids=user_ids,
-		status="FAILED",
-		failure_reason=reason,
-		logger=logger,
+		user_id=None,
+		request_user_ids=user_ids,
+		use_database=True,
 	)
-	logger.error("NAS request marked as FAILED | RequestId=%s | Users=%s", request_id, len(user_ids))
 
 
 async def _dispatch_claimed_request(claimed: ClaimedRequest, logger: logging.Logger) -> None:
@@ -282,7 +316,13 @@ async def _dispatch_claimed_request(claimed: ClaimedRequest, logger: logging.Log
 		return
 
 	if portal_name == "NAS":
-		_process_nas_claim(request_id=request_id, user_ids=user_ids, logger=logger)
+		await _process_nas_claim(
+			request_id=request_id,
+			request_type=request_type,
+			action_type=action_type,
+			user_ids=user_ids,
+			logger=logger,
+		)
 		return
 
 	raise ValueError(f"Unsupported PortalName: {portal_name}")

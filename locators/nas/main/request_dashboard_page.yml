@@ -1,0 +1,5 @@
+request_dashboard_page:
+  add_member_button: "#cphNasHrMasterBody_btnAddMember"
+  add_bulk_member_button: "#cphNasHrMasterBody_btnAddBulkMember"
+  add_family_member_button: "#cphNasHrMasterBody_btnAddFamilyMember"
+  accordion_header: "a.acchdr"
