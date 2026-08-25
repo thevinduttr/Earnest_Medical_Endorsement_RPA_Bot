@@ -66,3 +66,4 @@ config/secrets/
 # Misc
 *.pid
 *.seed
+config/gmail_token.json
